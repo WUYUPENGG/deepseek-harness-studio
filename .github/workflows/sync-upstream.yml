@@ -1,0 +1,34 @@
+# 自动同步上游 fufankeji/deepseek-harness-studio -> 本 fork main
+# 触发: 每天北京时间 06:00 (UTC 22:00) / 手动 Run workflow
+# 合并冲突时任务会失败并保留你的分支，去本地用 sync-upstream.sh 解决
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: '0 22 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge upstream main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/fufankeji/deepseek-harness-studio.git
+          git fetch upstream main
+          git merge upstream/main --no-edit
+          git push origin main
