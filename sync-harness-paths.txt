@@ -1,0 +1,13 @@
+# deepseek-harness → studio 自动同步白名单（每行一个路径，支持 # 注释）
+#
+# 安全原则: 只放 "studio 未二开 / rsync 覆盖零风险" 的路径。
+#   - rsync 仅覆盖同名文件/目录，不删除 studio 独有的文件或目录
+#   - 【不要】放 apps/desktop、apps/cli、packages、Jenkinsfile、.github/ 等
+#     studio 二开 + 自研打包区域，否则会覆盖本地二开。
+#   - vendor/、examples/ 里含 CLAUDE.md 符号链接与测试快照，全量 rsync 会
+#     产生 typechanged 噪声、可能覆盖本地化改动 → 需要时在本地人工处理，
+#     不要加入自动白名单。
+native/
+python/
+docs/
+assets/

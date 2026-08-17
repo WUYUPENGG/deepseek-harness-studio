@@ -57,6 +57,12 @@ pipeline {
             defaultValue: false,
             description: '使用 Jenkins 凭据对安装包签名（macOS: Developer ID 签名 + 公证；Windows: Authenticode）。凭据配置见 接入指南-签名.md'
         )
+
+        booleanParam(
+            name: 'SYNC_HARNESS',
+            defaultValue: false,
+            description: '手动 CI 一键同步：先从 https://github.com/WUYUPENGG/deepseek-harness 按 sync-harness-paths.txt 白名单同步代码（native/python/vendor/docs/assets/examples），再开始打包。仅当次构建生效，不自动提交代码。'
+        )
     }
 
     environment {
@@ -79,6 +85,16 @@ pipeline {
                 checkout scm
                 sh "git checkout ${params.BRANCH} || true"
                 sh 'git rev-parse --short HEAD'
+            }
+        }
+
+        stage('同步 deepseek-harness 代码 (SYNC_HARNESS)') {
+            when { expression { params.SYNC_HARNESS } }
+            steps {
+                // 按 sync-harness-paths.txt 白名单, 把 deepseek-harness 最新代码覆盖到工作区
+                // 脚本仅覆盖白名单内路径, 不删除 studio 二开文件; 见 .ci/sync-harness.sh
+                sh 'bash .ci/sync-harness.sh'
+                sh 'git status --short'
             }
         }
 
