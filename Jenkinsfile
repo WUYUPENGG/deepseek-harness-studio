@@ -83,7 +83,9 @@ pipeline {
         stage('检出代码') {
             steps {
                 checkout scm
-                sh "git checkout ${params.BRANCH} || true"
+                // 不要切到 agent 本地的旧分支(会丢新提交), 直接 fetch BRANCH 并检出其最新提交
+                sh "git fetch origin ${params.BRANCH} --quiet || true"
+                sh "git checkout -f FETCH_HEAD || true"
                 sh 'git rev-parse --short HEAD'
             }
         }
