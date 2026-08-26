@@ -140,6 +140,14 @@ const SOURCE_KEYS = {
   cache: 'cacheSource',
 } as const satisfies Record<CatalogListResult['source'], PluginCenterLocaleKey>
 
+const NOTICE_KEYS = {
+  'github-mapped': 'githubMapped',
+  'github-partial': 'githubPartial',
+  'github-source-only': 'githubSourceOnly',
+  'github-no-dsh-bundle': 'githubNoDshBundle',
+  'network-unavailable': 'catalogNetworkUnavailable',
+} as const satisfies Record<NonNullable<CatalogListResult['notice']>, PluginCenterLocaleKey>
+
 function entryKey(entry: CatalogSummary): string {
   return `${entry.pluginId}@${entry.version}`
 }
@@ -440,7 +448,7 @@ function DiscoveryGrid({
 
 function DetailDrawer({
   entry, detailState, compatibilityState, installedItem, mutationsEnabled, operation,
-  operationRequestFailed, closeRef, onClose, onInstall, onManage, t,
+  operationRequestFailed, closeRef, onClose, onRetry, onInstall, onManage, t,
 }: {
   readonly entry: CatalogSummary
   readonly detailState: DetailState
@@ -451,6 +459,7 @@ function DetailDrawer({
   readonly operationRequestFailed: boolean
   readonly closeRef: { current: HTMLButtonElement | null }
   readonly onClose: () => void
+  readonly onRetry: () => void
   readonly onInstall: (entry: CatalogSummary, opener: HTMLButtonElement) => void
   readonly onManage: () => void
   readonly t: Translator
@@ -468,6 +477,9 @@ function DetailDrawer({
     : compatibilityState.status === 'error'
       ? 'error'
       : compatibilityState.result.allowed ? 'allowed' : 'blocked'
+  const installedDetailKey = installedItem === null || installedItem.version !== entry.version
+    ? null
+    : installedItem.enabled ? 'installedDetailEnabled' : 'installedDetailDisabled'
   return (
     <div className={css.drawerBackdrop} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
       <aside className={css.drawer} aria-label={`${t('discoveryDetails')}：${entry.displayName}`}>
@@ -487,7 +499,12 @@ function DetailDrawer({
           <div className={css.drawerBadges}><EntryBadges entry={entry} t={t} /></div>
 
           {detailState.status === 'loading' ? <p className={css.status}>{t('detailLoading')}</p> : null}
-          {detailState.status === 'error' ? <p className={css.error} role="alert">{t('detailError')}</p> : null}
+          {detailState.status === 'error' ? (
+            <div className={css.error} role="alert">
+              <span>{t('detailError')} {t('detailErrorHint')}</span>
+              <button type="button" onClick={onRetry}>{t('retryDetail')}</button>
+            </div>
+          ) : null}
           {detailState.status === 'ready' && detail === null ? <p className={css.status}>{t('detailUnavailable')}</p> : null}
           {detail === null ? null : (
             <>
@@ -499,20 +516,27 @@ function DetailDrawer({
                 </div>
               )}
               <p className={css.drawerDescription}>{detail.description}</p>
-              <section className={`${css.drawerSection} ${css.preflight}`} data-state={compatibilityStatus}>
-                <h3>{t('preflight')}</h3>
-                <p>{compatibilityLabel}</p>
-                {compatibilityState.status !== 'ready' ? null : (
-                  <>
-                    <p>{compatibilityState.result.riskSummary}</p>
-                    {compatibilityState.result.reasons.length === 0 ? null : (
-                      <ul>{compatibilityState.result.reasons.map(reason => (
-                        <li key={`${reason.code}:${reason.subject}`}>{t(compatibilityReasonKey(reason.code))} · {reason.subject}</li>
-                      ))}</ul>
-                    )}
-                  </>
-                )}
-              </section>
+              {installedDetailKey === null ? (
+                <section className={`${css.drawerSection} ${css.preflight}`} data-state={compatibilityStatus}>
+                  <h3>{t('preflight')}</h3>
+                  <p>{compatibilityLabel}</p>
+                  {compatibilityState.status !== 'ready' ? null : (
+                    <>
+                      <p>{compatibilityState.result.riskSummary}</p>
+                      {compatibilityState.result.reasons.length === 0 ? null : (
+                        <ul>{compatibilityState.result.reasons.map(reason => (
+                          <li key={`${reason.code}:${reason.subject}`}>{t(compatibilityReasonKey(reason.code))} · {reason.subject}</li>
+                        ))}</ul>
+                      )}
+                    </>
+                  )}
+                </section>
+              ) : (
+                <section className={`${css.drawerSection} ${css.preflight}`} data-state="allowed">
+                  <h3>{t('installedStatus')}</h3>
+                  <p>{t(installedDetailKey)}</p>
+                </section>
+              )}
               <section className={css.drawerSection}>
                 <h3>{t('information')}</h3>
                 <dl className={css.drawerFacts}>
@@ -678,7 +702,8 @@ export function PluginDiscoveryPage({
         setView({ status: 'ready', result })
         if (criteria.query !== '' || initialRefreshStarted.current) return
         initialRefreshStarted.current = true
-        if (result.source === 'network' && result.freshness === 'fresh') return
+        if (result.source === 'network' && result.freshness === 'fresh'
+          && uniqueEntries(result).length >= criteria.limit) return
         void Promise.resolve().then(() => refresh(criteria)).then(
           (next) => { if (current) setView({ status: 'ready', result: next }) },
           () => {},
@@ -747,14 +772,9 @@ export function PluginDiscoveryPage({
     )
   }
 
-  const openDetail = (
-    entry: CatalogSummary,
-    opener: HTMLButtonElement,
-    initialCompatibility?: CompatibilityState,
-  ): void => {
+  const loadDetail = (entry: CatalogSummary, initialCompatibility?: CompatibilityState): void => {
     const request = detailRequest.current + 1
     detailRequest.current = request
-    detailOpener.current = opener
     setSelectedEntry(entry)
     setDetailState({ status: 'loading' })
     setCompatibilityState(initialCompatibility ?? { status: 'loading' })
@@ -762,7 +782,8 @@ export function PluginDiscoveryPage({
       (result) => { if (detailRequest.current === request) setDetailState({ status: 'ready', result }) },
       () => { if (detailRequest.current === request) setDetailState({ status: 'error' }) },
     )
-    if (initialCompatibility !== undefined) return
+    const installedItem = installedItems.get(`${entry.catalogKind}:${entry.pluginId}`) ?? null
+    if (initialCompatibility !== undefined || installedItem?.version === entry.version) return
     void Promise.resolve().then(() => checkCompatibility({
       pluginId: entry.pluginId,
       version: entry.version,
@@ -771,6 +792,19 @@ export function PluginDiscoveryPage({
       (result) => { if (detailRequest.current === request) setCompatibilityState({ status: 'ready', result }) },
       () => { if (detailRequest.current === request) setCompatibilityState({ status: 'error' }) },
     )
+  }
+
+  const openDetail = (
+    entry: CatalogSummary,
+    opener: HTMLButtonElement,
+    initialCompatibility?: CompatibilityState,
+  ): void => {
+    detailOpener.current = opener
+    loadDetail(entry, initialCompatibility)
+  }
+
+  const retryDetail = (): void => {
+    if (selectedEntry !== null) loadDetail(selectedEntry)
   }
 
   const closeDetail = (): void => {
@@ -952,6 +986,14 @@ export function PluginDiscoveryPage({
               <button type="button" onClick={retry}>{t('retry')}</button>
             </div>
           ) : null}
+          {ready?.notice !== undefined ? (
+            <div className={css.emptyPanel} role="status">
+              <span>{t(NOTICE_KEYS[ready.notice])}</span>
+              {ready.notice === 'network-unavailable'
+                ? <button type="button" onClick={retry}>{t('retry')}</button>
+                : null}
+            </div>
+          ) : null}
           {operationRequestFailed ? <p className={css.error} role="alert">{t('operationRequestFailed')}</p> : null}
 
           {ready !== null && query.trim() !== '' ? (
@@ -1071,6 +1113,7 @@ export function PluginDiscoveryPage({
           operationRequestFailed={operationRequestFailed}
           closeRef={drawerClose}
           onClose={closeDetail}
+          onRetry={retryDetail}
           onInstall={requestInstall}
           onManage={openPluginCenter}
           t={t}

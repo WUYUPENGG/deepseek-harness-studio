@@ -26,10 +26,6 @@
   --dsh-composer-dock-inset: 8px;
 }
 
-:global(html[data-dsh-desktop-platform='win32']) .root {
-  --dsh-windows-caption-controls-width: 138px;
-}
-
 .desktopTitlebarDragRegion {
   display: none;
 }
@@ -153,6 +149,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+}
+
+.crumbSubagent {
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .crumb:hover:not(:disabled) {

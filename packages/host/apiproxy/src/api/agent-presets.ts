@@ -45,6 +45,17 @@ export interface AgentPresetEntry {
 /** agent-preset-domain unary methods (the map key agentPreset.* of RpcMethodMap). */
 export interface AgentPresetsApi {
   /**
+   * Host-only binary archive boundary used by the fixed Desktop bridge. It is
+   * absent from RpcMethodMap so ordinary JSON clients cannot smuggle archive
+   * bytes or filesystem authority through the unary carrier.
+   */
+  importArchive?(
+    data: Uint8Array,
+    options: { readonly targetId?: string; readonly install: boolean },
+    signal: AbortSignal,
+  ): Promise<Response>
+
+  /**
    * Lists every preset the deployment currently supplies, in root-precedence
    * order — the roots as configured, each root's own presets sorted by id,
    * and the first root to supply an id wins. The order is not globally

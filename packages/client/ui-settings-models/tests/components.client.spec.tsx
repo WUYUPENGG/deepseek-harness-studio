@@ -3,7 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import Schema from '@deepseek-ai/schemastery'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-web-react'
+import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
 import type { RpcResponse, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
 import {
   ModelsSection, needsSetup, providerCopy, providerTargetLabel, removeProviderProfile,
@@ -14,9 +14,11 @@ import {
   DeepSeekModelsEditor, formatCapacity, modelDrafts, parseCapacity, validateDeepSeekModels,
 } from '../src/client/DeepSeekModelsEditor.tsx'
 import { apiKeyFailure } from '../src/client/apiKey.ts'
+import { SettingsDescribeMirror } from '@deepseek-ai/dsh-client-ui-settings/src/client/settings-mirror.ts'
 import { deriveKeyRef, ModelsSettingsStore } from '../src/client/store.ts'
 import type { ProviderRow } from '../src/client/store.ts'
 import { en } from '../src/client/locales.ts'
+import { settingsSchema } from './settings-schema.client.ts'
 
 afterEach(cleanup)
 
@@ -48,7 +50,7 @@ const PiAiConfig = Schema.object({
 const DeepSeekConfig = Schema.object({
   apiKeyEnv: Schema.string().role('credential-ref'),
   baseURL: Schema.string().pattern(/^https:\/\//),
-  reasoningEffort: Schema.union(['off', 'high', 'max']),
+  reasoningEffort: Schema.union(['off', 'low', 'high', 'max']),
   defaultContextWindow: Schema.number().step(1).min(1),
   models: Schema.array(Schema.object({
     id: Schema.string().required(),
@@ -185,16 +187,18 @@ type WireFace = ConstructorParameters<typeof ModelsSettingsStore>[0]
 
 async function mountFace(scripted: ReturnType<typeof scriptedFace>) {
   const { face, update, replace, mutate, set, unset } = scripted
-  const controller = new ModelsSettingsStore(face as unknown as WireFace)
+  const mirror = new SettingsDescribeMirror(face as never)
+  const controller = new ModelsSettingsStore(face as unknown as WireFace, settingsSchema, mirror)
   await controller.load()
-  const injected: ModelsSectionInjected = {
+  const injected: ModelsSectionProps = {
     controller,
     useSnapshot: bindSnapshotSelector(controller.store),
     api: face as never,
+    schema: settingsSchema,
     t,
   }
   const view = render(<ModelsSection {...injected} />)
-  return { view, face, update, replace, mutate, set, unset, controller }
+  return { view, face, update, replace, mutate, set, unset, controller, mirror }
 }
 
 async function mountSection(overrides: Parameters<typeof scriptedFace>[0] = {}) {
@@ -254,7 +258,12 @@ describe('ModelsSection', () => {
     expect(configured.className).toContain('credentialDotConfigured')
     expect(configured.closest('li')?.textContent).toContain('openai')
     const missing = screen.getByRole('img', { name: en.credentialMissing })
-    expect(missing.closest('li')?.textContent).toContain('DeepSeek')
+    const deepSeekRow = missing.closest('li')
+    expect(deepSeekRow?.textContent).toContain('DeepSeek')
+    expect(deepSeekRow?.textContent).toContain('DeepSeek-V4-Flash-Vision-Exp')
+    expect(deepSeekRow?.textContent).toContain(en.nativeVisionAvailable)
+    expect(deepSeekRow?.textContent).toContain(en.imageInputBadge)
+    expect(deepSeekRow?.textContent).toContain(en.nativeVisionSharedKey)
     // The card is still one click away.
     fireEvent.click(screen.getByRole('button', { name: deepSeekCopy(en.editProvider) }))
     expect(screen.getByLabelText(en.keyInput)).toBeTruthy()
@@ -265,12 +274,13 @@ describe('ModelsSection', () => {
     face.credentials.describe.mockImplementation((payload: { refs: string[] }) => Promise.resolve(ok({
       credentials: Object.fromEntries(payload.refs.map(ref => [ref, { configured: false, writable: true }])),
     })))
-    const controller = new ModelsSettingsStore(face as unknown as WireFace)
+    const controller = new ModelsSettingsStore(face as unknown as WireFace, settingsSchema, new SettingsDescribeMirror(face as never))
     await controller.load()
     render(<ModelsSection
       controller={controller}
       useSnapshot={bindSnapshotSelector(controller.store)}
       api={face as never}
+      schema={settingsSchema}
       t={t}
     />)
 
@@ -287,13 +297,14 @@ describe('ModelsSection', () => {
     face.credentials.describe.mockImplementation((payload: { refs: string[] }) => Promise.resolve(ok({
       credentials: Object.fromEntries(payload.refs.map(ref => [ref, { configured: true, writable: true }])),
     })))
-    const controller = new ModelsSettingsStore(face as unknown as WireFace)
+    const controller = new ModelsSettingsStore(face as unknown as WireFace, settingsSchema, new SettingsDescribeMirror(face as never))
     await controller.load()
     cleanup()
     render(<ModelsSection
       controller={controller}
       useSnapshot={bindSnapshotSelector(controller.store)}
       api={face as never}
+      schema={settingsSchema}
       t={t}
     />)
     // Now a row with an Edit button, not an open card.
@@ -347,7 +358,9 @@ describe('ModelsSection', () => {
     fireEvent.click(screen.getByText(en.apply))
     await waitFor(() => { expect(set).toHaveBeenCalledWith({ ref: 'DEEPSEEK_API_KEY', value: 'sk-live' }) })
     expect(update).not.toHaveBeenCalled()
-    await waitFor(() => { expect(face.settings.describe.mock.calls.length).toBeGreaterThan(1) })
+    // The saved key re-loads the join; the settings answer rides the shared
+    // mirror, so the reload shows as a directory read rather than a describe.
+    await waitFor(() => { expect(face.llm.providers.mock.calls.length).toBeGreaterThan(1) })
     expect((await screen.findByRole('status')).textContent).toBe(
       providerCopy(en.savedProvider, { provider: 'deepseek-official', displayName: 'DeepSeek' }),
     )
@@ -369,6 +382,7 @@ describe('ModelsSection', () => {
       displayName="DeepSeek"
       hideTitle
       namespace={wireNamespaces()[0]!}
+      schema={settingsSchema}
       settingsPath={[]}
       api={face as never}
       t={t}
@@ -467,6 +481,77 @@ describe('ModelsSection', () => {
       }],
       expectedRevision: 0,
     })
+  })
+
+  it('declares native image capability on the exact DeepSeek model without adding a route selector', async () => {
+    const { mutate } = await mountDeepSeekCard({
+      mutate: vi.fn(() => Promise.resolve(ok(wireNamespaces()[0]))),
+    })
+    fireEvent.click(screen.getByText(en.customized))
+    expandRow(1)
+
+    const nativeImage = screen.getByLabelText<HTMLInputElement>(`${en.nativeImageInput} 1`)
+    expect(nativeImage.checked).toBe(false)
+    expect(screen.getByText(en.nativeImageInputHint)).toBeTruthy()
+    fireEvent.click(nativeImage)
+    expect(nativeImage.checked).toBe(true)
+    fireEvent.click(screen.getByText(en.apply))
+
+    await waitFor(() => { expect(mutate).toHaveBeenCalledTimes(1) })
+    expect(mutate.mock.calls[0]?.[0]).toEqual({
+      ns: 'llm-deepseek',
+      ops: [{
+        op: 'set',
+        path: ['models'],
+        value: [
+          { ...DEFAULT_DEEPSEEK_MODELS[0], inputModalities: ['text', 'image'] },
+          DEFAULT_DEEPSEEK_MODELS[1],
+        ],
+      }],
+      expectedRevision: 0,
+    })
+  })
+
+  it('shows image capability without opening advanced settings', () => {
+    render(<DeepSeekModelsEditor
+      models={[
+        { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', inputModalities: ['text'] },
+        {
+          id: 'deepseek-v4-flash-vision-exp',
+          name: 'DeepSeek-V4-Flash-Vision-Exp',
+          inputModalities: ['text', 'image'],
+        },
+      ]}
+      overridden={false}
+      defaultContextWindow={1_000_000}
+      defaultMaxTokens={256_000}
+      t={t}
+      disabled={false}
+      onChange={vi.fn()}
+      onReset={vi.fn()}
+    />)
+
+    expect(screen.getByText(en.imageInputBadge)).toBeTruthy()
+    expect(screen.queryByLabelText(`${en.nativeImageInput} 2`)).toBeNull()
+  })
+
+  it('removes only image capability and keeps the required text modality', () => {
+    const onChange = vi.fn()
+    render(<DeepSeekModelsEditor
+      models={[{ id: 'vision-model', inputModalities: ['image', 'text'] }]}
+      overridden={true}
+      defaultContextWindow={undefined}
+      defaultMaxTokens={undefined}
+      t={t}
+      disabled={false}
+      onChange={onChange}
+      onReset={vi.fn()}
+    />)
+    expandRow(1)
+    const nativeImage = screen.getByLabelText<HTMLInputElement>(`${en.nativeImageInput} 1`)
+    expect(nativeImage.checked).toBe(true)
+    fireEvent.click(nativeImage)
+    expect(onChange).toHaveBeenCalledWith([{ id: 'vision-model', inputModalities: ['text'] }])
   })
 
   it('rejects duplicate DeepSeek model ids before writing', async () => {
@@ -621,6 +706,7 @@ describe('ModelsSection', () => {
       provider="deepseek-official"
       displayName="DeepSeek"
       namespace={overridden}
+      schema={settingsSchema}
       settingsPath={[]}
       api={face as never}
       t={t}
@@ -850,6 +936,7 @@ describe('ModelsSection', () => {
       provider="deepseek-official"
       displayName="DeepSeek"
       namespace={bare}
+      schema={settingsSchema}
       settingsPath={[]}
       api={face as never}
       t={t}
@@ -952,7 +1039,7 @@ describe('ModelsSection', () => {
     const set = vi.fn()
       .mockResolvedValueOnce(fail('credential store unavailable', 'credential-rejected'))
       .mockResolvedValueOnce(ok({}))
-    const { face, controller } = await mountSection({ mutate, set })
+    const { face, controller, mirror } = await mountSection({ mutate, set })
     fireEvent.click(screen.getByText(en.add))
     await screen.findByLabelText(en.provider)
     fireEvent.change(screen.getByLabelText<HTMLInputElement>(en.keyInput), { target: { value: 'sk-ant' } })
@@ -964,7 +1051,12 @@ describe('ModelsSection', () => {
       hasDocument: false,
       namespaces: wireNamespaces().map(namespace => namespace.ns === 'llm-pi-ai' ? afterSettings : namespace),
     }))
-    await act(async () => { await controller.load() })
+    // The refreshed settings answer reaches the page through the mirror's own
+    // refresh (the document commit's invalidation in production).
+    await act(async () => {
+      await mirror.load()
+      await controller.load()
+    })
     expect(controller.store.getSnapshot().namespaces.get('llm-pi-ai')?.revision).toBe(1)
     fireEvent.click(screen.getByText(en.apply))
     await waitFor(() => { expect(set).toHaveBeenCalledTimes(2) })
@@ -1007,12 +1099,13 @@ describe('ModelsSection', () => {
     const unhandled = vi.fn()
     process.on('unhandledRejection', unhandled)
     try {
-      const controller = new ModelsSettingsStore(face as unknown as WireFace)
+      const controller = new ModelsSettingsStore(face as unknown as WireFace, settingsSchema, new SettingsDescribeMirror(face as never))
       await controller.load()
       render(<ModelsSection
         controller={controller}
         useSnapshot={bindSnapshotSelector(controller.store)}
         api={face as never}
+        schema={settingsSchema}
         t={t}
       />)
       const key = await screen.findByLabelText<HTMLInputElement>(en.keyInput)
@@ -1144,12 +1237,14 @@ describe('ModelsSection', () => {
   it('renders the load failure with a retry control', async () => {
     const face = scriptedFace()
     face.face.llm.providers = vi.fn(() => Promise.resolve(fail('directory down', 'internal'))) as never
-    const controller = new ModelsSettingsStore(face.face as unknown as WireFace)
+    const controller = new ModelsSettingsStore(
+      face.face as unknown as WireFace, settingsSchema, new SettingsDescribeMirror(face.face as never))
     await controller.load()
     render(<ModelsSection
       controller={controller}
       useSnapshot={bindSnapshotSelector(controller.store)}
       api={face.face as never}
+      schema={settingsSchema}
       t={t}
     />)
     expect(screen.getByText(/directory down/)).toBeTruthy()
@@ -1164,13 +1259,14 @@ describe('ModelsSection', () => {
       hasDocument: false,
       namespaces: wireNamespaces(),
     })))
-    const controller = new ModelsSettingsStore(face as unknown as WireFace)
+    const controller = new ModelsSettingsStore(face as unknown as WireFace, settingsSchema, new SettingsDescribeMirror(face as never))
     await controller.load()
     cleanup()
     render(<ModelsSection
       controller={controller}
       useSnapshot={bindSnapshotSelector(controller.store)}
       api={face as never}
+      schema={settingsSchema}
       t={t}
     />)
     expect(screen.getByText(en.readOnly)).toBeTruthy()
@@ -1226,11 +1322,12 @@ describe('ModelsSection', () => {
 
   it('loads on first render of an idle controller', async () => {
     const { face } = scriptedFace()
-    const controller = new ModelsSettingsStore(face as unknown as WireFace)
+    const controller = new ModelsSettingsStore(face as unknown as WireFace, settingsSchema, new SettingsDescribeMirror(face as never))
     render(<ModelsSection
       controller={controller}
       useSnapshot={bindSnapshotSelector(controller.store)}
       api={face as never}
+      schema={settingsSchema}
       t={t}
     />)
     await screen.findByText('DeepSeek')

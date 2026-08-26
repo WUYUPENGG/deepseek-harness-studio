@@ -1,7 +1,8 @@
 // ChatView: the default conversation view — one stable keyed parent list over
 // final business Nodes, plus paging, pending steering and bottom-follow.
 // Each row dispatches through 'conversation.chat.node'; ui-tool owns the
-// tool-call renderer and its recursive root/subcall composition.
+// tool-call renderer and its recursive root/subcall composition. A Host
+// open-path refusal from the injected opener is an in-page dialog here.
 //
 // Scroll: when nested under `[data-conversation-scroll]` (active conversation
 // column), that host is the scrollport and this view is flow content; when
@@ -12,12 +13,16 @@
 // ChatNodeSeat subscribes to one Node key, so Assistant deltas and Tool
 // lifecycle updates replace only their own row without remounting it.
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ConversationTimelineSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
-import { IconChevronDownOutline14 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { ChatViewSlotProps } from '../contract/slots.ts'
+import { Button, IconChevronDownOutline14, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { ChatViewSlotProps, RenderMessageImages } from '../contract/slots.ts'
 import { PendingSteeringBubble } from './MessageItem.tsx'
 import { ChatNodeSeat } from './ChatNodeSeat.tsx'
+import { ConversationOutline } from './ConversationOutline.tsx'
+import {
+  mergeConversationOutline, outlineEntriesFromChat, type ConversationOutlineEntry,
+} from './outline.ts'
 import { formatRunDuration } from './message-chrome.ts'
 import css from './ChatView.module.css'
 
@@ -41,6 +46,24 @@ function anchorElement(list: HTMLElement, key: string): HTMLElement | null {
     if (row.dataset.chatAnchorKey === key) return row
   }
   return null
+}
+
+/** Find an already-rendered row by its history sequence. */
+function anchorSeqElement(list: HTMLElement, seq: number): HTMLElement | null {
+  for (const row of list.querySelectorAll<HTMLElement>('[data-chat-anchor-seq]')) {
+    if (Number(row.dataset.chatAnchorSeq) === seq) return row
+  }
+  return null
+}
+
+/** Allow a completed history pull to commit its React rows before measuring. */
+function afterRender(): Promise<void> {
+  if (typeof requestAnimationFrame !== 'function') {
+    return new Promise((resolve) => { setTimeout(resolve, 0) })
+  }
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => { requestAnimationFrame(() => { resolve() }) })
+  })
 }
 
 /** Row position in scrollport coordinates (viewport-independent). */
@@ -95,6 +118,17 @@ function scrollPosition(list: HTMLElement, scrollport: HTMLElement): ChatScrollP
   }
 }
 
+/** Host/OS refusal text for the file-open dialog; empty throws keep a locale fallback. */
+function openFailureMessage(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return message === '' ? fallback : message
+}
+
+/** ProducedFiles opens the session workspace as `.`. */
+function isFolderOpenPath(path: string): boolean {
+  return path === '.'
+}
+
 function runningTurnStartTime(timeline: ConversationTimelineSnapshot): number | null {
   let latest: number | null = null
   for (const turn of timeline.turns.values()) {
@@ -145,7 +179,7 @@ function TurnStatus({ startTime, t }: {
  */
 export function ChatView({
   useSession, useSessions, useStore, renderSlot, sessionId, openFile, loadOlder, loadImage, inspectCall, chatScroll, forkAt,
-  fileMentions, t,
+  fileMentions, readOutline, t,
 }: ChatViewSlotProps) {
   const order = useSession(s => s.chat.order)
   const nodeStore = useSession(s => s.chat.nodes)
@@ -159,12 +193,62 @@ export function ChatView({
   const hasMore = useSession(s => s.hasMore)
   const loadingOlder = useSession(s => s.loadingOlder)
   const selectedCallId = useStore(s => s.selection?.callId)
+  const [fileOpenError, setFileOpenError] = useState<{ path: string; message: string } | null>(null)
+  const [fileOpenBusy, setFileOpenBusy] = useState(false)
+  const [durableOutline, setDurableOutline] = useState<readonly ConversationOutlineEntry[]>([])
+  const [outlineLoading, setOutlineLoading] = useState(false)
+  const [outlineError, setOutlineError] = useState(false)
+  const [outlineNavigationError, setOutlineNavigationError] = useState(false)
+  const [outlineExpanded, setOutlineExpanded] = useState(false)
+  const [activeOutlineSeq, setActiveOutlineSeq] = useState<number | null>(null)
+  const [jumpingOutlineSeq, setJumpingOutlineSeq] = useState<number | null>(null)
+  const [highlightedOutlineSeq, setHighlightedOutlineSeq] = useState<number | null>(null)
+  // Close/retry must ignore a settlement that started before the latest
+  // gesture; otherwise a cancelled in-flight refusal reopens the dialog.
+  const fileOpenRequest = useRef(0)
+
+  const requestOpenFile = useCallback((path: string) => {
+    const id = ++fileOpenRequest.current
+    setFileOpenBusy(true)
+    void openFile(path).then(
+      () => {
+        if (id !== fileOpenRequest.current) return
+        setFileOpenError(null)
+        setFileOpenBusy(false)
+      },
+      (error: unknown) => {
+        if (id !== fileOpenRequest.current) return
+        setFileOpenError({
+          path,
+          message: openFailureMessage(
+            error,
+            t(isFolderOpenPath(path) ? 'fileOpen.folderUnknown' : 'fileOpen.unknown'),
+          ),
+        })
+        setFileOpenBusy(false)
+      },
+    )
+  }, [openFile, t])
+
+  const closeFileOpenError = useCallback(() => {
+    fileOpenRequest.current += 1
+    setFileOpenError(null)
+    setFileOpenBusy(false)
+  }, [])
 
   const pendingSteering = useMemo(
     () => inbox.filter(item => item.placement === 'steering'),
     [inbox],
   )
+  const renderMessageImages = useCallback<RenderMessageImages>(
+    owner => renderSlot('conversation.message.images', { ...owner, loadImage }),
+    [loadImage, renderSlot],
+  )
   const runningTurnStart = useMemo(() => runningTurnStartTime(timeline), [timeline])
+  const outlineEntries = mergeConversationOutline(
+    durableOutline,
+    outlineEntriesFromChat(order, nodeStore),
+  )
 
   const listRef = useRef<HTMLDivElement | null>(null)
   const columnRef = useRef<HTMLDivElement | null>(null)
@@ -183,6 +267,35 @@ export function ChatView({
    *  scroll-driven at-bottom chrome re-render (which would snap inertial
    *  scrolls the rest of the way to the floor). */
   const followSigRef = useRef<string | null>(null)
+  const hasMoreRef = useRef(hasMore)
+  const jumpRequestRef = useRef(0)
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  hasMoreRef.current = hasMore
+
+  useEffect(() => {
+    if (openState !== 'open') return
+    const controller = new AbortController()
+    setOutlineLoading(true)
+    setOutlineError(false)
+    void readOutline(controller.signal).then(
+      (entries) => {
+        if (controller.signal.aborted) return
+        setDurableOutline(entries)
+        setOutlineLoading(false)
+      },
+      () => {
+        if (controller.signal.aborted) return
+        setOutlineError(true)
+        setOutlineLoading(false)
+      },
+    )
+    return () => { controller.abort() }
+  }, [openState, readOutline, sessionId])
+
+  useEffect(() => () => {
+    jumpRequestRef.current += 1
+    if (highlightTimerRef.current !== null) clearTimeout(highlightTimerRef.current)
+  }, [])
 
   const firstKey = order[0]
   const firstSeq = firstKey === undefined ? null : nodeStore.get(firstKey)?.anchorSeq ?? null
@@ -296,6 +409,9 @@ export function ChatView({
     if (isAtBottom) chatScroll.save(null)
     else if (position !== null) chatScroll.save(position)
     observedTopRef.current = el.scrollTop
+    const visible = pagingAnchor(local, el)
+    const visibleSeq = visible?.dataset.chatAnchorSeq
+    if (visibleSeq !== undefined) setActiveOutlineSeq(Number(visibleSeq))
   }
 
   // Bind the scroll listener on the resolved scrollport once per mount;
@@ -312,6 +428,16 @@ export function ChatView({
       el.removeEventListener('scroll', onScroll)
     }
   }, [])
+
+  // Keep the directory highlight aligned after open, prepend, or a new tail
+  // row even when layout changed without a reader scroll event.
+  useLayoutEffect(() => {
+    const local = listRef.current
+    if (local === null || openState !== 'open') return
+    const visible = pagingAnchor(local, scrollerOf(local))
+    const visibleSeq = visible?.dataset.chatAnchorSeq
+    if (visibleSeq !== undefined) setActiveOutlineSeq(Number(visibleSeq))
+  }, [openState, order])
 
   // The ref starts null and is assigned every render, so the placeholder
   // initializer a function initial value would need never exists.
@@ -359,12 +485,69 @@ export function ChatView({
         }
       }
     }
-    loadOlder()
+    void loadOlder()
+  }
+
+  const jumpToOutline = (entry: ConversationOutlineEntry): void => {
+    const request = ++jumpRequestRef.current
+    setJumpingOutlineSeq(entry.seq)
+    setOutlineNavigationError(false)
+    void (async () => {
+      const local = listRef.current
+      if (local === null) return
+      let row = anchorSeqElement(local, entry.seq)
+      let previousFirst = local.querySelector<HTMLElement>('[data-chat-anchor-seq]')?.dataset.chatAnchorSeq
+      while (row === null && hasMoreRef.current && request === jumpRequestRef.current) {
+        await loadOlder()
+        await afterRender()
+        if (request !== jumpRequestRef.current) return
+        row = anchorSeqElement(local, entry.seq)
+        if (row !== null) break
+        const nextFirst = local.querySelector<HTMLElement>('[data-chat-anchor-seq]')?.dataset.chatAnchorSeq
+        if (nextFirst === previousFirst) break
+        previousFirst = nextFirst
+      }
+      if (request !== jumpRequestRef.current) return
+      if (row === null) {
+        setOutlineNavigationError(true)
+        return
+      }
+      setActiveOutlineSeq(entry.seq)
+      setOutlineExpanded(false)
+      setHighlightedOutlineSeq(entry.seq)
+      if (highlightTimerRef.current !== null) clearTimeout(highlightTimerRef.current)
+      highlightTimerRef.current = setTimeout(() => {
+        setHighlightedOutlineSeq(null)
+        highlightTimerRef.current = null
+      }, 2200)
+      await afterRender()
+      if (request !== jumpRequestRef.current) return
+      row.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })().finally(() => {
+      if (request === jumpRequestRef.current) setJumpingOutlineSeq(null)
+    })
   }
 
   return (
     <div className={css.root}>
-      <div ref={listRef} className={css.scroll}>
+      <div
+        ref={listRef}
+        className={`${css.scroll} ${outlineExpanded ? css.scrollOutlineExpanded : ''}`}
+      >
+        <div className={css.outlineDock}>
+          <ConversationOutline
+            entries={outlineEntries}
+            activeSeq={activeOutlineSeq}
+            jumpingSeq={jumpingOutlineSeq}
+            loading={outlineLoading}
+            error={outlineError}
+            navigationError={outlineNavigationError}
+            expanded={outlineExpanded}
+            onExpandedChange={setOutlineExpanded}
+            onJump={jumpToOutline}
+            t={t}
+          />
+        </div>
         <div ref={columnRef} className={css.column} data-chat-flow="">
           {openState === 'loading' && <div className={css.hint}>{t('chat.loadingHistory')}</div>}
           {openState === 'error' && openError !== null && (
@@ -383,13 +566,14 @@ export function ChatView({
             <ChatNodeSeat
               key={nodeKey}
               nodeKey={nodeKey}
+              highlighted={nodeStore.get(nodeKey)?.anchorSeq === highlightedOutlineSeq}
               useSession={useSession}
               selectedCallId={selectedCallId}
               cwd={cwd}
-              openFile={openFile}
+              openFile={requestOpenFile}
               inspectCall={inspectCall}
               forkAt={forkAt}
-              loadImage={loadImage}
+              renderMessageImages={renderMessageImages}
               fileMentions={fileMentions}
               renderSlot={renderSlot}
               t={t}
@@ -402,7 +586,12 @@ export function ChatView({
               wait, tool execution, streaming) so it never flickers per step. */}
           {running && <TurnStatus startTime={runningTurnStart} t={t} />}
           {pendingSteering.map(item => (
-            <PendingSteeringBubble key={item.id} content={item.content} loadImage={loadImage} t={t} />
+            <PendingSteeringBubble
+              key={item.id}
+              content={item.content}
+              renderMessageImages={renderMessageImages}
+              t={t}
+            />
           ))}
         </div>
         {!atBottom && (
@@ -422,6 +611,44 @@ export function ChatView({
           </div>
         )}
       </div>
+      {fileOpenError !== null && (
+        <FileOpenErrorDialog
+          path={fileOpenError.path}
+          message={fileOpenError.message}
+          busy={fileOpenBusy}
+          onClose={closeFileOpenError}
+          onRetry={() => { requestOpenFile(fileOpenError.path) }}
+          t={t}
+        />
+      )}
     </div>
+  )
+}
+
+/** In-page Host open-path refusal: the wire reason plus a retry of the same path. */
+function FileOpenErrorDialog({
+  path, message, busy, onClose, onRetry, t,
+}: {
+  path: string
+  message: string
+  busy: boolean
+  onClose: () => void
+  onRetry: () => void
+  t: ChatViewSlotProps['t']
+}) {
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      closeLabel={t('close')}
+      title={t(isFolderOpenPath(path) ? 'fileOpen.folderTitle' : 'fileOpen.title')}
+      description={message}
+      footer={(
+        <>
+          <Button variant="outline" className={css.modalAction} onClick={onClose}>{t('cancel')}</Button>
+          <Button variant="primary" className={css.modalAction} disabled={busy} onClick={onRetry}>{t('retry')}</Button>
+        </>
+      )}
+    />
   )
 }

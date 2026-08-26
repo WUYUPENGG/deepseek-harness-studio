@@ -4,7 +4,7 @@
 // plain fallback for everything else. Chrome (language banner + copy) matches
 // deepsuite `@deepseek/md` code blocks; token colors stay on `--shiki-*`.
 
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import clsx from 'clsx'
 import { writeClipboard } from '../clipboard.ts'
 import { grammarLoadCount, highlightToHtml, subscribeGrammarLoaded } from './highlight.ts'
@@ -21,24 +21,24 @@ export interface CodeBlockProps {
   copyLabel?: string | undefined
   /** Copy-button label during the post-copy confirmation window. */
   copiedLabel?: string | undefined
+  /** Disable copy while the owning source can still grow. */
+  copyDisabled?: boolean | undefined
 }
 
-export function CodeBlock({ code, lang, className, copyLabel = '复制', copiedLabel = '复制成功' }: CodeBlockProps) {
+export function CodeBlock({
+  code, lang, className, copyLabel = '复制', copiedLabel = '复制成功', copyDisabled = false,
+}: CodeBlockProps) {
   const trimmed = code.endsWith('\n') ? code.slice(0, -1) : code
   // Re-render when a lazy grammar finishes loading, so a fence that showed plain
   // text while its language's grammar imported picks up highlighting. The
   // snapshot value is opaque; only its change across renders drives the memo.
   const loaded = useSyncExternalStore(subscribeGrammarLoaded, grammarLoadCount, grammarLoadCount)
   const html = useMemo(() => highlightToHtml(trimmed, lang), [trimmed, lang, loaded])
-  const rootRef = useRef<HTMLDivElement>(null)
   const [copied, setCopied] = useState(false)
 
   const onCopy = useCallback(() => {
     if (copied) return
-    /* v8 ignore next -- both arms always mount a <pre>; trimmed is the
-       typed fallback if the DOM shape ever diverges. */
-    const text = rootRef.current?.querySelector('pre')?.textContent ?? trimmed
-    void writeClipboard(text).then((ok) => {
+    void writeClipboard(trimmed).then((ok) => {
       if (!ok) return
       setCopied(true)
       window.setTimeout(() => { setCopied(false) }, 1000)
@@ -57,12 +57,12 @@ export function CodeBlock({ code, lang, className, copyLabel = '复制', copiedL
     )
 
   return (
-    <div ref={rootRef} className={clsx(css.block, 'md-code-block', className)}>
+    <div className={clsx(css.block, 'md-code-block', className)}>
       <div className={css.bannerWrap}>
         <div className={css.banner}>
           <div className={css.infostring}>{lang ?? ''}</div>
           <div className={css.action}>
-            <button type="button" className={css.copyButton} onClick={onCopy}>
+            <button type="button" className={css.copyButton} disabled={copyDisabled} onClick={onCopy}>
               {copied ? copiedLabel : copyLabel}
             </button>
           </div>

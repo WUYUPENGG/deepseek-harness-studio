@@ -95,8 +95,9 @@ describe('assembled Bailian vision enhancement', () => {
     const image = new Uint8Array(await readFile(DEFAULT_IMAGE))
     let bailianCalls = 0
     vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
-      if (String(input) !== 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions') {
-        throw new Error(`unexpected snapshot network request: ${String(input)}`)
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (url !== 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions') {
+        throw new Error(`unexpected snapshot network request: ${url}`)
       }
       bailianCalls++
       return new Response(JSON.stringify({ choices: [{ message: { content: OBSERVATION } }] }), {
@@ -109,7 +110,7 @@ describe('assembled Bailian vision enhancement', () => {
     let firstRaw = ''
     let firstCompleted = false
     try {
-      expect(first.ctx.attachments.imageLimits.maxImageBytes).toBe(10 * 1024 * 1024)
+      expect(first.ctx.attachments.imageLimits.maxImageBytes).toBe(20 * 1024 * 1024)
       expectOk(await first.ctx.apiProxy.vision.enable({
         rpcId: RpcId('vision-enable-snapshot'),
         payload: {
@@ -120,6 +121,10 @@ describe('assembled Bailian vision enhancement', () => {
           question: '请识别默认验证图。',
         },
       }))
+      expect(expectOk(await first.ctx.apiProxy.vision.route({
+        rpcId: RpcId('vision-route-snapshot'),
+        payload: { modelProvider: 'deepseek-official', model: 'deepseek-v4-flash' },
+      }))).toMatchObject({ mode: 'compatible', provider: 'bailian', visionModel: 'qwen3.8-max' })
       const attachment = await first.ctx.attachments.saveImage({
         data: image, mediaType: 'image/webp', name: 'default-cat.webp',
       })

@@ -76,6 +76,8 @@ export interface RpcMethodMap {
   'llm.models': LlmApi['models']
   'llm.discoverModels': LlmApi['discoverModels']
   'vision.status': VisionApi['status']
+  'vision.route': VisionApi['route']
+  'vision.activate': VisionApi['activate']
   'vision.test': VisionApi['test']
   'vision.enable': VisionApi['enable']
 }

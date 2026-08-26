@@ -16,7 +16,8 @@ export type {
   GoalsApi, GoalRef,
   SettingsApi, SettingsNamespaceView, SettingsPathOpView, SettingsSecretView,
   CredentialsApi, CredentialView, ConfigurableProviderView, DiscoveredModelView, LlmApi,
-  VisionApi, VisionProvider, VisionProviderView, VisionStatusView, VisionTestView,
+  VisionApi, VisionProvider, VisionProviderView, VisionRouteMode, VisionRouteView,
+  VisionStatusView, VisionTestView,
   SubagentsApi, SubagentAddress, SubagentCatalog, SubagentListEntry, SubagentPromptReceipt,
   JobView,
 } from '@deepseek-ai/dsh-host-apiproxy/api'

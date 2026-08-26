@@ -72,7 +72,7 @@ function scriptedApi(overrides: {
     },
     host: {
       describe: r => ok(r, {
-        version: '0-test', cwd: '/t', attachedSessions: 0, canOpenPath: true,
+        version: '0-test', cwd: '/t', attachedSessions: 0, home: '/h', canOpenPath: true,
       }),
       pickDirectory: r => ok(r, { path: null }),
       listDirectory: r => ok(r, { path: '/t', home: '/t', crumbs: [], entries: [], truncated: false }),
@@ -133,10 +133,12 @@ function scriptedApi(overrides: {
         enabled: false, configured: false, provider: 'bailian', model: 'qwen3.8-max',
         apiKeyUrl: 'https://help.aliyun.com/zh/model-studio/get-api-key',
         providers: [
-          { id: 'bailian', name: '阿里云百炼', configured: false, defaultModel: 'qwen3.8-max', apiKeyUrl: 'https://help.aliyun.com/zh/model-studio/get-api-key', modelEditable: false },
-          { id: 'openrouter', name: 'OpenRouter', configured: false, defaultModel: 'openai/gpt-4.1-mini', apiKeyUrl: 'https://openrouter.ai/settings/keys', modelEditable: true },
+          { id: 'bailian', name: '阿里云百炼', configured: false, defaultModel: 'qwen3.8-max', apiKeyUrl: 'https://help.aliyun.com/zh/model-studio/get-api-key', modelEditable: false, baseUrlEditable: false, apiKeyRequired: true },
+          { id: 'openrouter', name: 'OpenRouter', configured: false, defaultModel: 'openai/gpt-4.1-mini', apiKeyUrl: 'https://openrouter.ai/settings/keys', modelEditable: true, baseUrlEditable: false, apiKeyRequired: true },
         ],
       }),
+      route: r => ok(r, { mode: 'off', modelProvider: r.payload.modelProvider, model: r.payload.model }),
+      activate: r => ok(r, { mode: 'native', modelProvider: r.payload.modelProvider, model: r.payload.model }),
       test: r => ok(r, { provider: 'bailian', model: 'qwen3.8-max', description: 'fixture image' }),
       enable: r => ok(r, { provider: 'bailian', model: 'qwen3.8-max', description: 'fixture image' }),
     },

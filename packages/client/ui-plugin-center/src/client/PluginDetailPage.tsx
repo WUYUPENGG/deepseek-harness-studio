@@ -271,7 +271,7 @@ function CompatibilityPanel({ state, mutationsEnabled, t }: {
 
 /** Exact-version detail page with F003 trusted-install confirmation and status. */
 export function PluginDetailPage({
-  entry, state, compatibility, mutationsEnabled, operation, operationRequestFailed, onInstall, t,
+  entry, state, compatibility, mutationsEnabled, operation, operationRequestFailed, onInstall, onRetry, t,
 }: {
   readonly entry: CatalogSummary
   readonly state: DetailState
@@ -280,6 +280,7 @@ export function PluginDetailPage({
   readonly operation: PluginOperationSnapshot | null
   readonly operationRequestFailed: boolean
   readonly onInstall: () => void
+  readonly onRetry: () => void
   readonly t: PluginCenterTabProps['t']
 }) {
   const [confirmationOpen, setConfirmationOpen] = useState(false)
@@ -315,7 +316,13 @@ export function PluginDetailPage({
     return (
       <main className={css.detailPage}>
         <DetailPageHeader entry={entry} />
-        <p role="alert" className={css.error}>{t('detailError')}</p>
+        <div role="alert" className={css.detailFailure}>
+          <span>
+            <strong>{t('detailError')}</strong>
+            <span>{t('detailErrorHint')}</span>
+          </span>
+          <Button variant="outline" size="sm" onClick={onRetry}>{t('retryDetail')}</Button>
+        </div>
       </main>
     )
   }

@@ -151,7 +151,14 @@ export class AgentPresetSeatController {
   async apply(): Promise<void> {
     const staged = this.staged
     const session = this.currentSession()
-    if (staged === undefined || session === undefined) return
+    if (staged === undefined) {
+      const committed = session?.agentPreset ?? this.fallback
+      if (committed !== '' && this.store.getSnapshot().current !== committed) {
+        this.set({ current: committed, error: null, introduce: false })
+      }
+      return
+    }
+    if (session === undefined) return
     // A started session's history was produced under its own composition; the
     // host refuses the swap, so the stage is no longer meaningful.
     if (!session.blank || session.agentPreset === staged) {

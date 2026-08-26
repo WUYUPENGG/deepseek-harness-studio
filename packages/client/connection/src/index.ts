@@ -57,7 +57,7 @@ export interface ConnectionConfig {
    * that is not a bare, canonical authority fails the plugin load.
    */
   trustedHosts?: string[]
-  /** Maximum buffered JSON body for every `/api` request. */
+  /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */
   maxRequestBodyBytes?: number
 }
 
@@ -117,6 +117,8 @@ const PRIVILEGED_METHODS = new Set([
   'credentials.unset',
   'llm.discoverModels',
   'vision.status',
+  'vision.route',
+  'vision.activate',
   'vision.test',
   'vision.enable',
 ])

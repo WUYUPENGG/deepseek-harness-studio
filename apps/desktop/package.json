@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-desktop",
   "description": "DeepSeek Harness desktop application with tray-owned Host lifecycle",
-  "version": "0.1.0-rc.7",
+  "version": "0.1.0-rc.19",
   "private": true,
   "type": "module",
   "main": "lib/main.js",
@@ -10,16 +10,18 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tests/tsconfig.json",
     "dev": "node --import tsx scripts/dev-desktop.ts",
     "dev:rebuild": "node --import tsx scripts/dev-desktop.ts --rebuild",
-    "package": "pnpm --workspace-root run build && node --import tsx scripts/stage-runtime.ts && electron-builder --dir",
-    "dist": "pnpm --workspace-root run build && node --import tsx scripts/stage-runtime.ts && electron-builder",
+    "build:applications": "pnpm --filter @fufan/dsh-plugin-llm-wiki run build:application",
+    "package": "pnpm run build:applications && pnpm --workspace-root run build && node --import tsx scripts/stage-runtime.ts && electron-builder --dir",
+    "dist": "pnpm run build:applications && pnpm --workspace-root run build && node --import tsx scripts/stage-runtime.ts && electron-builder",
     "dist:mac": "node --import tsx scripts/release-mac.ts",
-    "dist:win": "pnpm --workspace-root run build && DSH_DESKTOP_TARGET_PLATFORM=win32 DSH_DESKTOP_TARGET_ARCH=x64 node --import tsx scripts/stage-runtime.ts && node --import tsx scripts/release-win.ts",
+    "dist:win": "pnpm run build:applications && pnpm --workspace-root run build && DSH_DESKTOP_TARGET_PLATFORM=win32 DSH_DESKTOP_TARGET_ARCH=x64 node --import tsx scripts/stage-runtime.ts && node --import tsx scripts/release-win.ts",
     "publish:update": "node --import tsx scripts/publish-update.ts"
   },
   "license": "MIT",
   "dependencies": {
     "@deepseek-ai/cordis": "workspace:^",
     "@deepseek-ai/cordis-plugin-group": "workspace:^",
+    "@deepseek-ai/cordis-plugin-include": "workspace:^",
     "@deepseek-ai/cordis-plugin-loader": "workspace:^",
     "@deepseek-ai/dsh-atomic-write": "workspace:^",
     "@deepseek-ai/dsh-app-boot": "workspace:^",
@@ -27,8 +29,11 @@
     "@deepseek-ai/dsh-launch-environment": "workspace:^",
     "@deepseek-ai/dsh-plugin-center-contracts": "workspace:^",
     "electron-updater": "6.8.9",
+    "fflate": "^0.8.2",
+    "js-yaml": "^4.2.0",
     "semver": "7.8.5",
-    "tar": "7.5.22"
+    "tar": "7.5.22",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@types/ali-oss": "6.23.3",
@@ -37,7 +42,6 @@
     "ali-oss": "6.23.0",
     "electron": "43.4.0",
     "electron-builder": "26.15.3",
-    "js-yaml": "^4.2.0",
     "tsdown": "^0.22.2",
     "typescript": "^6.0.3",
     "vitest": "^4.1.8"
@@ -92,8 +96,9 @@
       ]
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
       "include": "build/installer.nsh",
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,

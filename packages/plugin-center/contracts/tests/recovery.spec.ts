@@ -283,6 +283,8 @@ describe('plugin center recovery contract', () => {
       recoveryAttempt: 1,
       recoveryReasonCode: null,
       exportedAt: '2026-08-15T01:00:04.000Z',
+      desktopVersion: '0.1.0-rc.20',
+      platform: 'win32-x64',
     }
     expect(decodePluginRecoveryDiagnostic(diagnostic)).toEqual(diagnostic)
     expect(() => decodePluginRecoveryDiagnostic({ ...diagnostic, token: 'secret' }))
@@ -301,6 +303,8 @@ describe('plugin center recovery contract', () => {
       recoveryAttempt: 1,
       recoveryReasonCode: 'unsupported-journal-version',
       exportedAt: '2026-08-15T01:00:04.000Z',
+      desktopVersion: '0.1.0-rc.20',
+      platform: 'win32-x64',
     }
     expect(decodePluginRecoveryDiagnostic(unreadable)).toEqual(unreadable)
     expect(() => decodePluginRecoveryDiagnostic({ ...unreadable, pluginId: 'guessed.plugin' }))

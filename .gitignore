@@ -34,6 +34,7 @@ apps/web/dist/
 apps/desktop/runtime-host/
 apps/desktop/dist/
 .artifacts/
+.dsh-build/
 /artifacts/
 /assets-src/
 .playwright-mcp/

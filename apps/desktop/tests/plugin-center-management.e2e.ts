@@ -31,6 +31,7 @@ const PACKAGE_NAME = '@fixture/managed-bundle'
 const PLUGIN_ID = 'fixture.managed'
 const ENTRY_ID = 'fixture.managed'
 const CLIENT_MODULE = '@fixture/managed-client'
+const UNDECLARED_SKILL_ID = 'fixture-managed-runtime-skill'
 const CURRENT_VERSION = '0.1.0-rc.5'
 const TARGET_VERSION = '0.1.0-rc.6'
 
@@ -204,7 +205,7 @@ async function harness(
             ...(active ? [{ entryId: `include:${ENTRY_ID}`, enabled: true, fiberPhase: 'active' }] : []),
           ],
           clientModules: ['@fixture/unrelated-client', ...(active ? [CLIENT_MODULE] : [])],
-          skillIds: ['unrelated-skill'],
+          skillIds: ['unrelated-skill', ...(active ? [UNDECLARED_SKILL_ID] : [])],
         },
       },
     }), { status: 200, headers: { 'content-type': 'application/json' } })
@@ -310,6 +311,15 @@ describe('installed Plugin Center management', () => {
     expect(after.dsh?.profile).toMatchObject({ bundles: [], disabledBundles: [] })
     expect(value.invocations.at(-1)?.args).toContain('remove')
     await expect(readFile(value.configPath, 'utf8')).resolves.toBe('{"retained":true}\n')
+  })
+
+  it('commits uninstall when the removed Bundle owned an undeclared runtime Skill', async () => {
+    const value = await harness(true)
+
+    await value.run({ action: 'uninstall', version: CURRENT_VERSION })
+
+    expect(readProfileManifest('test', value.profile).dependencies).not.toHaveProperty(PACKAGE_NAME)
+    expect(value.controller.getOperation()).toMatchObject({ action: 'uninstall', phase: 'committed' })
   })
 
   it.each([true, false])('updates one exact version and preserves enabled intent=%s', async (enabled) => {

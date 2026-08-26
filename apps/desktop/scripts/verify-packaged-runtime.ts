@@ -14,14 +14,17 @@ const REQUIRED_HOST_FILES = [
   ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'index.html'],
   ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'default-background.webp'],
   ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'cloud-cat-background.webp'],
+  ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'jiutian-deep-space-compute-observatory.webp'],
+  ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'jiutian-quantum-glass-laboratory.webp'],
+  ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'jiutian-dawn-compute-horizon.webp'],
   ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'beyondata-logo.png'],
 ] as const
 
 const REQUIRED_WINDOWS_HOST_FILES = [
   ['@koromix', 'koffi-win32-x64', 'win32_x64', 'koffi.node'],
   ['node-addon-require-builtin-win32-x64-msvc', 'prebuilt', 'win32-x64-msvc-napi-v9.node'],
-  ['node-pty', 'prebuilds', 'win32-x64', 'pty.node'],
   ['node-pty', 'prebuilds', 'win32-x64', 'conpty.node'],
+  ['node-pty', 'prebuilds', 'win32-x64', 'conpty_console_list.node'],
 ] as const
 
 interface GenericUpdateConfiguration {
@@ -59,6 +62,12 @@ export async function afterPack(context: AfterPackContext): Promise<void> {
     const sharpFiles = await readdir(join(modules, '@img', 'sharp-win32-x64', 'lib'))
     if (!sharpFiles.some(file => /^sharp-win32-x64-.*\.node$/.test(file))) {
       throw new Error('Windows x64 Sharp native module is missing from the packaged Host runtime')
+    }
+  }
+  if (context.electronPlatformName === 'darwin') {
+    const sharpFiles = await readdir(join(modules, '@img', 'sharp-darwin-arm64', 'lib'))
+    if (!sharpFiles.some(file => /^sharp-darwin-arm64-.*\.node$/.test(file))) {
+      throw new Error('macOS arm64 Sharp native module is missing from the packaged Host runtime')
     }
   }
   await writeFile(

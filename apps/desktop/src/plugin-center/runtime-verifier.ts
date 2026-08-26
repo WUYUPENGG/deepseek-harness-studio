@@ -115,6 +115,7 @@ function requireUnrelatedContinuity(
   prior: PluginRuntimeEvidence,
   observed: PluginRuntimeEvidence,
   candidates: readonly CatalogVersionPreflight[],
+  allowUndeclaredSkillRemoval = false,
 ): void {
   for (const entry of prior.entries) {
     if (!isRestartStableEntry(entry)) continue
@@ -134,6 +135,7 @@ function requireUnrelatedContinuity(
   for (const skillId of prior.skillIds) {
     if (!candidates.some(candidate => candidate.expectedSkillIds.includes(skillId))
       && !observed.skillIds.includes(skillId)) {
+      if (allowUndeclaredSkillRemoval) continue
       throw new Error(`unrelated Skill disappeared during plugin mutation: ${skillId}`)
     }
   }
@@ -248,12 +250,22 @@ export class PluginRuntimeVerifier {
     return inventory
   }
 
-  /** Require every target identity absent while unrelated prior runtime stays stable. */
+  /**
+   * Require every declared target identity absent while unrelated Loader and client runtime stays stable.
+   * @param origin - Replacement Host origin.
+   * @param candidate - Exact target version whose declared runtime identities must disappear.
+   * @param prior - Runtime inventory captured before Host stop.
+   * @param replacedCandidate - Prior exact version during an update.
+   * @param allowUndeclaredSkillRemoval - Accept missing Skill ids after target Loader removal
+   * when an ecosystem package did not declare the Skills it registered.
+   * @returns The verified replacement Host inventory.
+   */
   async verifyDeactivation(
     origin: string,
     candidate: CatalogVersionPreflight,
     prior: PluginRuntimeEvidence,
     replacedCandidate?: CatalogVersionPreflight,
+    allowUndeclaredSkillRemoval = false,
   ): Promise<PluginRuntimeEvidence> {
     const inventory = await this.readEvidence(origin)
     const removedCandidates = replacedCandidate === undefined ? [candidate] : [candidate, replacedCandidate]
@@ -276,6 +288,7 @@ export class PluginRuntimeVerifier {
       normalizeEvidence(prior, true).evidence,
       inventory,
       replacedCandidate === undefined ? [candidate] : [candidate, replacedCandidate],
+      allowUndeclaredSkillRemoval,
     )
     return inventory
   }

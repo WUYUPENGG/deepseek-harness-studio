@@ -21,6 +21,16 @@ import type {
   PluginDiagnosticExportResult,
   PluginRecoveryRetryRequest,
   PluginRecoverySnapshot,
+  PresetInstallPreviewRequest,
+  PresetInstallPreviewResult,
+  PresetInstallRequest,
+  PresetInstallResult,
+  PresetRuntimeRequest,
+  PresetRuntimeSnapshot,
+  PresetSquareDetailQuery,
+  PresetSquareDetailResult,
+  PresetSquareListQuery,
+  PresetSquareListResult,
 } from '@deepseek-ai/dsh-plugin-center-contracts'
 
 /** Update lifecycle exposed to the sandboxed renderer. */
@@ -37,7 +47,10 @@ type DesktopUpdatePhase =
 /** Immutable update snapshot delivered to the settings page. */
 export interface DesktopUpdateState {
   readonly phase: DesktopUpdatePhase
+  /** Running Studio shell version. */
   readonly currentVersion: string
+  /** Harness core version embedded in the packaged Host runtime. */
+  readonly harnessVersion: string
   readonly availableVersion?: string
   readonly progress?: number
   readonly message?: string
@@ -47,7 +60,13 @@ export interface DesktopUpdateState {
 export type DesktopAppearancePalette = readonly [string, string, string, string]
 
 /** Stable identifiers for themes bundled with the Desktop frontend. */
-export type DesktopBuiltinAppearanceTheme = 'official' | 'whale-maid' | 'cloud-cat'
+export type DesktopBuiltinAppearanceTheme =
+  | 'official'
+  | 'whale-maid'
+  | 'cloud-cat'
+  | 'jiutian-deep-space'
+  | 'jiutian-quantum-glass'
+  | 'jiutian-dawn-horizon'
 
 /** Persisted appearance settings. A null image selects one bundled theme. */
 export interface DesktopAppearanceSettings {
@@ -82,6 +101,16 @@ export interface DesktopBridge {
     refresh(query: CatalogListQuery): Promise<CatalogListResult>
     detail(query: CatalogDetailQuery): Promise<CatalogDetailResult>
     checkCompatibility(request: CompatibilityRequest): Promise<CompatibilityDecision>
+  }
+  readonly presetSquare: {
+    /** Browser fixtures may browse, but only Desktop can mutate the local roster. */
+    readonly mutationsEnabled: boolean
+    list(query: PresetSquareListQuery): Promise<PresetSquareListResult>
+    detail(query: PresetSquareDetailQuery): Promise<PresetSquareDetailResult>
+    previewInstall(request: PresetInstallPreviewRequest): Promise<PresetInstallPreviewResult>
+    install(request: PresetInstallRequest): Promise<PresetInstallResult>
+    checkRuntime(request: PresetRuntimeRequest): Promise<PresetRuntimeSnapshot>
+    installRuntime(request: PresetRuntimeRequest): Promise<PresetRuntimeSnapshot>
   }
   readonly installedPlugins: {
     list(): Promise<InstalledPluginListResult>
@@ -122,6 +151,12 @@ export const DESKTOP_CHANNELS = {
   catalogRefresh: 'dsh-desktop:catalog:refresh',
   catalogDetail: 'dsh-desktop:catalog:detail',
   catalogCheckCompatibility: 'dsh-desktop:catalog:check-compatibility',
+  presetSquareList: 'dsh-desktop:preset-square:list',
+  presetSquareDetail: 'dsh-desktop:preset-square:detail',
+  presetSquarePreviewInstall: 'dsh-desktop:preset-square:preview-install',
+  presetSquareInstall: 'dsh-desktop:preset-square:install',
+  presetSquareRuntimeCheck: 'dsh-desktop:preset-square:runtime-check',
+  presetSquareRuntimeInstall: 'dsh-desktop:preset-square:runtime-install',
   installedPluginsList: 'dsh-desktop:installed-plugins:list',
   pluginOperationStart: 'dsh-desktop:plugin-operation:start',
   pluginOperationGet: 'dsh-desktop:plugin-operation:get',

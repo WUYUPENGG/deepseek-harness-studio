@@ -66,6 +66,11 @@
   font: inherit;
 }
 
+.copyButton:disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
 .block :where(pre) {
   font: var(--dsl-code-block-content-font);
   padding: 16px;

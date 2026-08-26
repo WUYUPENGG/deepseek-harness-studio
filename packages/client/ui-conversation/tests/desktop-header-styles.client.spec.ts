@@ -25,9 +25,6 @@ describe('conversation desktop header', () => {
   })
 
   it('composes the Windows caption controls into the title row', () => {
-    expect(css).toMatch(
-      /:global\(html\[data-dsh-desktop-platform='win32'\]\) \.root\s*\{[^}]*--dsh-windows-caption-controls-width: 138px;/s,
-    )
     const windowsDragSeat = css.match(
       /:global\(html\[data-dsh-desktop-platform='win32'\]\) \.desktopTitlebarDragRegion\s*\{([^}]*)}/s,
     )?.[1]

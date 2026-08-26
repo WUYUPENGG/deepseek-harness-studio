@@ -28,6 +28,10 @@
   -webkit-app-region: drag;
 }
 
+:global(html[data-dsh-desktop-platform='win32']) .topbar {
+  padding-right: calc(12px + var(--dsh-windows-caption-controls-width));
+}
+
 :global(html[data-dsh-desktop='true']) .topbar button {
   -webkit-app-region: no-drag;
 }

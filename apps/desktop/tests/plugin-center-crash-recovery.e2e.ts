@@ -8,7 +8,10 @@ import type {
 } from '@deepseek-ai/dsh-plugin-center-contracts'
 import { PluginOperationJournal } from '../src/plugin-center/operation-journal.ts'
 import type { PluginRecoveryController } from '../src/plugin-center/recovery-controller.ts'
-import { preparePluginCenterStartup } from '../src/plugin-center/startup-recovery.ts'
+import {
+  isPluginSafeModeManagementAction,
+  preparePluginCenterStartup,
+} from '../src/plugin-center/startup-recovery.ts'
 
 const roots: string[] = []
 const STARTED_AT = '2026-08-15T01:00:00.000Z'
@@ -97,7 +100,7 @@ function appendRecovery(
   record: PluginTransactionJournalRecord,
   phase: 'recovery-restoring-profile' | 'rolled-back' | 'recovery-failed',
   terminalResult: 'rolled-back' | 'recovery-failed' | null,
-  reason: 'profile-restore-failed' | null = null,
+  reason: 'profile-restore-failed' | 'runtime-verification-failed' | null = null,
 ): PluginTransactionJournalRecord {
   const at = `2026-08-15T01:00:0${String(record.phaseHistory.length)}.000Z`
   return {
@@ -122,14 +125,17 @@ function appendRecovery(
   }
 }
 
-function snapshot(phase: 'rolled-back' | 'recovery-failed'): PluginRecoverySnapshot {
+function snapshot(
+  phase: 'rolled-back' | 'recovery-failed',
+  reason: 'profile-restore-failed' | 'runtime-verification-failed' = 'profile-restore-failed',
+): PluginRecoverySnapshot {
   return {
     schemaVersion: 1,
     operationId: 'operation-1',
     phase,
     recoveryPhase: null,
     operationFailureCode: 'internal',
-    recoveryReasonCode: phase === 'recovery-failed' ? 'profile-restore-failed' : null,
+    recoveryReasonCode: phase === 'recovery-failed' ? reason : null,
     attempt: 1,
     updatedAt: '2026-08-15T01:00:03.000Z',
     canRetry: phase === 'recovery-failed',
@@ -176,6 +182,7 @@ describe('Plugin Center crash startup ownership', () => {
       journal,
       recovery,
       startNormalHost: async () => { events.push('normal-host') },
+      startSafeHost: async () => { events.push('safe-host') },
     })).resolves.toMatchObject({ mode: 'normal', recovery: { phase: 'rolled-back' } })
     expect(events).toEqual(['recover', 'normal-host'])
   })
@@ -204,6 +211,7 @@ describe('Plugin Center crash startup ownership', () => {
       journal,
       recovery,
       startNormalHost: async () => { events.push('normal-host') },
+      startSafeHost: async () => { events.push('safe-host') },
     })).resolves.toMatchObject({ mode: 'normal' })
     expect(events).toEqual(['resume-recovery', 'normal-host'])
     await expect(journal.read()).resolves.toMatchObject({ terminalResult: 'rolled-back' })
@@ -218,18 +226,54 @@ describe('Plugin Center crash startup ownership', () => {
     await journal.write(withFoundation)
     await journal.write(appendRecovery(withFoundation, 'recovery-failed', 'recovery-failed', 'profile-restore-failed'))
     const startNormalHost = vi.fn(async () => {})
+    const startSafeHost = vi.fn(async () => {})
     const recoverOpen = vi.fn()
     const recovery = {
       recoverOpen,
       getSnapshot: vi.fn(async () => snapshot('recovery-failed')),
     } as unknown as PluginRecoveryController
 
-    await expect(preparePluginCenterStartup({ journal, recovery, startNormalHost })).resolves.toMatchObject({
+    await expect(preparePluginCenterStartup({ journal, recovery, startNormalHost, startSafeHost })).resolves.toMatchObject({
       mode: 'recovery-failed',
       recovery: { canRetry: true },
     })
     expect(recoverOpen).not.toHaveBeenCalled()
     expect(startNormalHost).not.toHaveBeenCalled()
+    expect(startSafeHost).not.toHaveBeenCalled()
+  })
+
+  it('starts the restricted Plugin Center when only exact runtime verification failed', async () => {
+    const root = await temporaryRoot()
+    const journal = new PluginOperationJournal(join(root, 'journal'))
+    const initial = initialRecord()
+    await journal.write(initial)
+    const prior = foundation(initial)
+    await journal.write(prior)
+    await journal.write(appendRecovery(
+      prior,
+      'recovery-failed',
+      'recovery-failed',
+      'runtime-verification-failed',
+    ))
+    const startNormalHost = vi.fn(async () => {})
+    const startSafeHost = vi.fn(async () => {})
+    const recovery = {
+      recoverOpen: vi.fn(),
+      getSnapshot: vi.fn(async () => snapshot('recovery-failed', 'runtime-verification-failed')),
+    } as unknown as PluginRecoveryController
+
+    await expect(preparePluginCenterStartup({
+      journal, recovery, startNormalHost, startSafeHost,
+    })).resolves.toMatchObject({
+      mode: 'safe',
+      recovery: { recoveryReasonCode: 'runtime-verification-failed' },
+    })
+    expect(startSafeHost).toHaveBeenCalledTimes(1)
+    expect(startNormalHost).not.toHaveBeenCalled()
+    expect(isPluginSafeModeManagementAction('disable')).toBe(true)
+    expect(isPluginSafeModeManagementAction('uninstall')).toBe(true)
+    expect(isPluginSafeModeManagementAction('update')).toBe(false)
+    expect(isPluginSafeModeManagementAction('enable')).toBe(false)
   })
 
   it('keeps normal Host closed when a future journal version cannot be decoded', async () => {
@@ -239,6 +283,7 @@ describe('Plugin Center crash startup ownership', () => {
     await mkdir(directory)
     await writeFile(journal.filename, '{"schemaVersion":999,"private":"must-not-project"}\n')
     const startNormalHost = vi.fn(async () => {})
+    const startSafeHost = vi.fn(async () => {})
     const recoverOpen = vi.fn()
     const recovery = {
       recoverOpen,
@@ -256,7 +301,7 @@ describe('Plugin Center crash startup ownership', () => {
       })),
     } as unknown as PluginRecoveryController
 
-    await expect(preparePluginCenterStartup({ journal, recovery, startNormalHost })).resolves.toMatchObject({
+    await expect(preparePluginCenterStartup({ journal, recovery, startNormalHost, startSafeHost })).resolves.toMatchObject({
       mode: 'recovery-failed',
       recovery: {
         operationId: 'unreadable-journal',
@@ -265,5 +310,6 @@ describe('Plugin Center crash startup ownership', () => {
     })
     expect(recoverOpen).not.toHaveBeenCalled()
     expect(startNormalHost).not.toHaveBeenCalled()
+    expect(startSafeHost).not.toHaveBeenCalled()
   })
 })

@@ -8,6 +8,7 @@ import {
   decodePluginRecoveryDiagnostic,
   type PluginDiagnosticExportResult,
   type PluginRecoveryDiagnostic,
+  type SupportedPluginPlatform,
 } from '@deepseek-ai/dsh-plugin-center-contracts'
 import {
   PluginOperationJournalError,
@@ -22,6 +23,10 @@ export type PluginDiagnosticPathSelector = (defaultFilename: string) => Promise<
 export class PluginRecoveryDiagnosticExporter {
   constructor(
     private readonly journal: PluginOperationJournal,
+    private readonly environment: {
+      readonly desktopVersion: string
+      readonly platform: SupportedPluginPlatform
+    },
     private readonly now: () => Date = () => new Date(),
   ) {}
 
@@ -46,6 +51,7 @@ export class PluginRecoveryDiagnosticExporter {
         recoveryAttempt: 1,
         recoveryReasonCode: error.reasonCode,
         exportedAt: this.now().toISOString(),
+        ...this.environment,
       })
     }
     if (record === null || record.header.operationId !== operationId) {
@@ -64,6 +70,7 @@ export class PluginRecoveryDiagnosticExporter {
       recoveryAttempt: record.recoveryAttempt,
       recoveryReasonCode: record.recoveryReasonCode,
       exportedAt: this.now().toISOString(),
+      ...this.environment,
     })
   }
 

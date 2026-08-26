@@ -2,7 +2,7 @@
 // apply inject factories exercised end to end against the terminal thin
 // API: the strict session API (views triple, draft mirror), the
 // provide-channel input face (machine-sink submit choreography incl.
-// optimistic clear + failure restore), the resident API (selectWorkspace
+// transactional clear + failure retention), the resident API (selectWorkspace
 // draft carrying), the composer-bar stop face, openDetails = select action +
 // layout orchestration, and the closeDetails details API. Complements
 // chat-apply.spec.tsx (registration) and selection-survival.spec.tsx (store
@@ -47,7 +47,20 @@ function sessionFakeFor() {
 
 async function bench() {
   const runtime = await SlotTestRuntime.create()
-  runtime.provide('connection', { api: { settings: {} }, isLoopback: false })
+  const sessionHistory = vi.fn().mockResolvedValue({
+    result: { ok: true, value: { events: [], hasMore: false } },
+  })
+  const subagentHistory = vi.fn().mockResolvedValue({
+    result: { ok: true, value: { events: [], hasMore: false } },
+  })
+  runtime.provide('connection', {
+    api: {
+      settings: {},
+      sessions: { history: sessionHistory },
+      subagents: { history: subagentHistory },
+    },
+    isLoopback: false,
+  })
   // The plugin injects both; these specs exercise no settings path.
   runtime.provide('remote', { $on: () => () => {} })
   runtime.provide('settingsScope', { bind: () => stubSettingsScope().scope } as never)
@@ -124,7 +137,7 @@ async function bench() {
   return {
     runtime, feature, slots: runtime.slots, entryOf,
     conversationApi, conversationHeaderApi, residentApi, composerApi, chatViewApi, inputApi,
-    sessionFake, layoutFake,
+    sessionFake, layoutFake, sessionHistory, subagentHistory,
   }
 }
 
@@ -138,8 +151,10 @@ describe('conversation slot inject API', () => {
     expect(injected.views.list().map(v => v.id)).toEqual(['chat'])
 
     const chatView = b.chatViewApi(ROOT)
-    chatView.injected.loadOlder()
+    await chatView.injected.loadOlder()
     expect(b.sessionFake.loadOlder).toHaveBeenCalledTimes(1)
+    await expect(chatView.injected.readOutline()).resolves.toEqual([])
+    expect(b.sessionHistory).toHaveBeenCalledWith({ sessionId: ROOT, maxMessages: 50 }, undefined)
     chatView.injected.forkAt(17)
     await vi.waitFor(() => {
       expect(b.runtime.sessions.calls).toContainEqual({ method: 'open', args: [ROOT] })
@@ -150,7 +165,7 @@ describe('conversation slot inject API', () => {
     await b.runtime.dispose()
   })
 
-  it('the provide-channel input face submits through the machine sink: trim, optimistic clear, failure restore without clobber', async () => {
+  it('the provide-channel input face submits through the machine sink: trim, transactional clear, failure retains the draft', async () => {
     const b = await bench()
     const { injected } = b.conversationApi(ROOT)
     const { state, actions } = b.inputApi(ROOT)
@@ -159,20 +174,23 @@ describe('conversation slot inject API', () => {
     actions.submit()
     expect(b.sessionFake.prompt).not.toHaveBeenCalled()
     expect(state.getSnapshot().draft).toBe('   ')
-    // Success: cleared and stays cleared.
+    // Success: the draft clears only after the sink settles.
     actions.setDraft('hello')
     actions.submit()
-    expect(state.getSnapshot().draft).toBe('')
-    await Promise.resolve()
-    expect(b.sessionFake.prompt).toHaveBeenCalledWith([{ type: 'text', text: 'hello' }], 'queue')
-    // Failure: restored (draft still empty when the rejection lands).
+    await vi.waitFor(() => {
+      expect(state.getSnapshot().draft).toBe('')
+    })
+    expect(b.sessionFake.prompt).toHaveBeenCalledWith([{ type: 'text', text: 'hello' }], 'queue', expect.any(AbortSignal))
+    // Failure: the draft is retained through the round-trip.
     b.sessionFake.prompt.mockResolvedValueOnce({ ok: false, error: { code: 'agent-busy', message: 'b', details: { reason: 'b' } } })
     actions.setDraft('retry me')
     actions.submit()
     await vi.waitFor(() => {
-      expect(state.getSnapshot().draft).toBe('retry me')
+      expect(b.sessionFake.prompt).toHaveBeenCalledTimes(2)
     })
-    // Failure landing after new typing: no clobber (restore fills empty only).
+    await new Promise(r => setTimeout(r, 0))
+    expect(state.getSnapshot().draft).toBe('retry me')
+    // Failure landing after new typing: no clobber (the interleaved edit wins).
     b.sessionFake.prompt.mockResolvedValueOnce({ ok: false, error: { code: 'agent-busy', message: 'b', details: { reason: 'b' } } })
     actions.submit()
     actions.setDraft('typed during flight')
@@ -233,10 +251,18 @@ describe('conversation slot inject API', () => {
   it('openFile (chat view face) resolves against session cwd and calls workspaces.openPath', async () => {
     const b = await bench()
     const { injected } = b.chatViewApi(ROOT)
-    injected.openFile('src/a.ts')
+    await injected.openFile('src/a.ts')
     await vi.waitFor(() => {
       expect(b.runtime.workspaces.calls).toContainEqual({ method: 'openPath', args: ['/proj/src/a.ts'] })
     })
+    await b.runtime.dispose()
+  })
+
+  it('openFile rejects when the Host cannot open the path', async () => {
+    const b = await bench()
+    b.runtime.workspaces.stub('openPath', () => Promise.reject(new Error('xdg-open is not available')))
+    const { injected } = b.chatViewApi(ROOT)
+    await expect(injected.openFile('src/a.ts')).rejects.toThrow('xdg-open is not available')
     await b.runtime.dispose()
   })
 

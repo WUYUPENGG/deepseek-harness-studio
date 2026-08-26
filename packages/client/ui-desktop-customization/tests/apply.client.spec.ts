@@ -2,7 +2,7 @@
 
 import { Context } from '@deepseek-ai/cordis'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
-import { SlotRegistry } from '@deepseek-ai/dsh-client-runtime/client'
+import { createSnapshotStore, SlotRegistry } from '@deepseek-ai/dsh-client-runtime/client'
 import { resolveSlotLabel } from '@deepseek-ai/dsh-client-ui-slots'
 import { describe, expect, it, vi } from 'vitest'
 import { apply, inject } from '@deepseek-ai/dsh-client-ui-desktop-customization/client'
@@ -25,6 +25,19 @@ async function bench() {
   const overrideTokens = vi.fn(() => disposeTokens)
   ctx.provide('theme', { overrideTokens } as never)
   ctx.provide('remote', { $on: () => () => {} } as never)
+  ctx.provide('modelDirectories', {
+    directoryFor: () => ({
+      store: createSnapshotStore({
+        current: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
+        routable: true,
+        groups: [],
+        failures: [],
+        status: 'ready',
+        error: null,
+      }),
+      load: () => Promise.resolve({}),
+    }),
+  } as never)
   ctx.provide('connection', {
     api: {
       vision: {
@@ -36,6 +49,8 @@ async function bench() {
             { id: 'openrouter', name: 'OpenRouter', configured: false, defaultModel: 'openai/gpt-4.1-mini', apiKeyUrl: 'https://openrouter.ai/settings/keys', modelEditable: true },
           ],
         } } }),
+        route: ({ modelProvider, model }: { modelProvider: string; model: string }) => Promise.resolve({ result: { ok: true, value: { mode: 'off', modelProvider, model } } }),
+        activate: ({ modelProvider, model }: { modelProvider: string; model: string }) => Promise.resolve({ result: { ok: true, value: { mode: 'native', modelProvider, model } } }),
         test: () => Promise.resolve({ result: { ok: true, value: { provider: 'bailian', model: 'qwen3.8-max', description: 'fixture image' } } }),
         enable: () => Promise.resolve({ result: { ok: true, value: { provider: 'bailian', model: 'qwen3.8-max', description: 'fixture image' } } }),
       },
@@ -48,21 +63,21 @@ async function bench() {
       'settings.section': { kind: 'list', scope: 'root' },
       'settings.general.item': { kind: 'list', scope: 'root' },
       'conversation.input.left': { kind: 'list', scope: 'session' },
-      'shell.overlay': { kind: 'list', scope: 'root' },
+      'sidebar.footer.action': { kind: 'list', scope: 'root' },
     },
   } as never, () => null)
   return { ctx, slots, overrideTokens, disposeTokens }
 }
 
 describe('Desktop customization client plugin', () => {
-  it('registers both settings sections, the shared vision controls, and the frame-wide brand badge', async () => {
+  it('registers both settings sections, the shared vision controls, and the sidebar brand action', async () => {
     const b = await bench()
     const fiber = b.ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
     const sections = b.slots.entries('settings.section')
     expect(sections.map(entry => entry.component)).toEqual([AppearanceSection, UpdateSection])
     expect(sections.map(entry => resolveSlotLabel(entry.options.label))).toEqual(['背景', '软件更新'])
-    expect(b.slots.entries('shell.overlay')[0]?.component).toBe(BrandBadge)
+    expect(b.slots.entries('sidebar.footer.action')[0]?.component).toBe(BrandBadge)
     expect(b.slots.entries('settings.general.item')[0]?.component).toBe(VisionEnhancementRow)
     const shortcut = b.slots.entries('conversation.input.left')[0]
     expect(shortcut?.component).toBe(VisionEnhancementShortcut)
@@ -74,7 +89,7 @@ describe('Desktop customization client plugin', () => {
     expect(b.overrideTokens).toHaveBeenCalledOnce()
     await fiber.dispose()
     expect(b.slots.entries('settings.section')).toHaveLength(0)
-    expect(b.slots.entries('shell.overlay')).toHaveLength(0)
+    expect(b.slots.entries('sidebar.footer.action')).toHaveLength(0)
     expect(b.slots.entries('settings.general.item')).toHaveLength(0)
     expect(b.slots.entries('conversation.input.left')).toHaveLength(0)
     expect(document.body.hasAttribute('data-dsh-desktop-skin')).toBe(false)
@@ -82,7 +97,7 @@ describe('Desktop customization client plugin', () => {
   })
 
   it('declares only the services it uses', () => {
-    expect(inject).toEqual(['slots', 'locale', 'theme', 'connection', 'remote'])
+    expect(inject).toEqual(['slots', 'locale', 'theme', 'connection', 'remote', 'modelDirectories'])
   })
 
   it('accepts the three supported image formats and rejects unsafe inputs', () => {

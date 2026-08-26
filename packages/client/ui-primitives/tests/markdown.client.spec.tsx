@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { JsonBlock, MarkdownText, MessageText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { cjkFriendlyStrong } from '../src/markdown/cjkFriendlyStrong.ts'
 import { mathCompatibility } from '../src/markdown/mathCompatibility.ts'
@@ -223,14 +223,25 @@ describe('MarkdownText', () => {
     expect(plain.container.querySelector('pre code')?.textContent).toContain('no language here')
   })
 
-  it('streaming renders fences plain; the finalize swap highlights them', () => {
+  it('keeps growing fences uncopyable and copies the complete source after finalization', () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+    const partial = '```ts\nconst answer'
     const fence = '```ts\nconst answer = 42\n```'
-    const live = render(<MarkdownText text={fence} streaming />)
+    const live = render(<MarkdownText text={partial} streaming />)
     expect(live.container.querySelector('pre.shiki')).toBeNull()
-    expect(live.container.querySelector('pre code')?.textContent).toContain('const answer = 42')
-    live.unmount()
-    const done = render(<MarkdownText text={fence} />)
-    expect(done.container.querySelector('pre.shiki')).not.toBeNull()
+    expect(live.container.querySelector('pre code')?.textContent).toContain('const answer')
+    const disabledCopy = live.getByRole('button', { name: '复制' })
+    expect(disabledCopy.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(disabledCopy)
+    expect(writeText).not.toHaveBeenCalled()
+
+    live.rerender(<MarkdownText text={fence} />)
+    expect(live.container.querySelector('pre.shiki')).not.toBeNull()
+    const enabledCopy = live.getByRole('button', { name: '复制' })
+    expect(enabledCopy.hasAttribute('disabled')).toBe(false)
+    fireEvent.click(enabledCopy)
+    expect(writeText).toHaveBeenCalledWith('const answer = 42')
   })
 
   it('forwards localized labels to fenced code blocks', () => {

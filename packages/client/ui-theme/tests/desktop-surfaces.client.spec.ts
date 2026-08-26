@@ -15,6 +15,12 @@ describe('desktop theme surfaces', () => {
     expect(css).toContain('--dsh-desktop-titlebar-inset: 44px;')
   })
 
+  it('defines the Windows caption-control safe-area width', () => {
+    expect(css).toMatch(
+      /html\[data-dsh-desktop-platform='win32'\]\s*\{[^}]*--dsh-windows-caption-controls-width: 138px;/s,
+    )
+  })
+
   it.each(['darwin', 'win32'])('makes the %s document stack transparent', (platform) => {
     const marker = `html[data-dsh-desktop-platform='${platform}']`
     expect(css).toContain(`${marker} body`)

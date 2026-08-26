@@ -3,7 +3,7 @@
  * Two-level selection per figma 496:26454's MenuDropdown: the root menu is
  * the Model / reasoning row pair (label + current value + a right chevron),
  * each opening a side card on hover, focus, or click — the provider-grouped model list over
- * the shared directory, and the adapter levels. DeepSeek's off/high/max ids
+ * the shared directory, and the adapter levels. DeepSeek's off/low/high/max ids
  * render as localized thinking modes; other routes keep adapter-owned names.
  * The trigger (313:14108's ToggleButton) shows both values.
  * Data and submission ride the SAME per-session ModelDirectory as the
@@ -34,6 +34,9 @@ type Submenu = 'model' | 'effort'
 /** Grace period for crossing the visual gap between the root and side menus. */
 const SUBMENU_LEAVE_DELAY_MS = 240
 
+/** DeepSeek's first-party multimodal route shipped in the Desktop catalog. */
+const DEEPSEEK_NATIVE_VISION_MODEL = 'deepseek-v4-flash-vision-exp'
+
 /** One dynamic effort row; undefined means preserve the provider default. */
 interface EffortChoice {
   key: string
@@ -46,8 +49,13 @@ function isDeepSeekProvider(id: string, name: string): boolean {
   return id === 'deepseek' || id.startsWith('deepseek-') || name.toLocaleLowerCase() === 'deepseek'
 }
 
+function isDeepSeekNativeVision(provider: string, model: string): boolean {
+  return provider === 'deepseek-official' && model === DEEPSEEK_NATIVE_VISION_MODEL
+}
+
 function deepSeekEffortLabel(id: string, t: ModelTranslate): string | undefined {
   if (id === 'off') return t('deepseek.effort.off')
+  if (id === 'low') return t('deepseek.effort.low')
   if (id === 'high') return t('deepseek.effort.high')
   if (id === 'max') return t('deepseek.effort.max')
   return undefined
@@ -55,6 +63,7 @@ function deepSeekEffortLabel(id: string, t: ModelTranslate): string | undefined 
 
 function deepSeekEffortDescription(id: string, t: ModelTranslate): string | undefined {
   if (id === 'off') return t('deepseek.effort.offDescription')
+  if (id === 'low') return t('deepseek.effort.lowDescription')
   if (id === 'high') return t('deepseek.effort.highDescription')
   if (id === 'max') return t('deepseek.effort.maxDescription')
   return undefined
@@ -108,6 +117,8 @@ export function ModelSelect(
   const reasoning = currentChoice?.model.reasoning
   const usesDeepSeekThinking = currentChoice !== undefined
     && isDeepSeekProvider(currentChoice.group.id, currentChoice.group.name)
+  const currentUsesNativeVision = currentChoice !== undefined
+    && isDeepSeekNativeVision(currentChoice.group.id, currentChoice.model.id)
   const effectiveEffort = state.current?.reasoningEffort ?? reasoning?.defaultEffort
   const effectiveEffortInfo = reasoning?.efforts.find(level => level.id === effectiveEffort)
   const effortLabel = reasoning === undefined
@@ -273,13 +284,16 @@ export function ModelSelect(
 
   const modelLabel = currentChoice?.model.name ?? t('trigger.fallback')
   const triggerLabel = effortLabel === undefined ? modelLabel : `${modelLabel} · ${effortLabel}`
+  const accessibleModelLabel = currentUsesNativeVision
+    ? `${modelLabel} · ${t('model.nativeVision')}`
+    : modelLabel
   const triggerAria = currentChoice === undefined
     ? t('trigger.selectAria')
     : effortLabel === undefined
-      ? t('trigger.aria', { model: modelLabel })
+      ? t('trigger.aria', { model: accessibleModelLabel })
       : usesDeepSeekThinking
-        ? t('trigger.ariaThinking', { model: modelLabel, effort: effortLabel })
-        : t('trigger.ariaEffort', { model: modelLabel, effort: effortLabel })
+        ? t('trigger.ariaThinking', { model: accessibleModelLabel, effort: effortLabel })
+        : t('trigger.ariaEffort', { model: accessibleModelLabel, effort: effortLabel })
   const menuAria = usesDeepSeekThinking ? t('menu.ariaDeepSeek') : t('menu.aria')
   const effortMenuLabel = usesDeepSeekThinking ? t('menu.thinking') : t('menu.effort')
   itemRefs.current = []
@@ -395,6 +409,7 @@ export function ModelSelect(
                       <div className={css.groupTitle} id={headingId}>{group.name}</div>
                       {group.models.map((model) => {
                         const selected = state.current?.provider === group.id && state.current.model === model.id
+                        const nativeVision = isDeepSeekNativeVision(group.id, model.id)
                         return (
                           <button
                             ref={itemRef()}
@@ -408,7 +423,14 @@ export function ModelSelect(
                             onClick={() => { choose({ provider: group.id, model: model.id }) }}
                           >
                             <span className={css.optionCopy}>
-                              <span className={css.modelName}>{model.name}</span>
+                              <span className={css.modelTitle}>
+                                <span className={css.modelName}>{model.name}</span>
+                                {nativeVision && (
+                                  <span className={css.nativeVisionBadge}>
+                                    {t('model.nativeVisionRecommended')}
+                                  </span>
+                                )}
+                              </span>
                               {model.description !== undefined && (
                                 <span className={css.description}>{model.description}</span>
                               )}

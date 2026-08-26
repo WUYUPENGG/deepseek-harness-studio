@@ -1,7 +1,7 @@
 /** Shared browser state for the Desktop visual-enhancement controls. */
 
 import type {
-  ConnectionHandle, VisionProvider, VisionProviderView,
+  ConnectionHandle, VisionProvider, VisionProviderView, VisionRouteView,
 } from '@deepseek-ai/dsh-api-remotes/client'
 import {
   createSnapshotStore, type SnapshotStore,
@@ -18,6 +18,8 @@ export interface VisionEnableProbe {
   provider?: VisionProvider
   /** Provider model id selected for this verification. */
   model?: string
+  /** OpenAI-compatible API base URL for a self-hosted provider. */
+  baseUrl?: string
   /** Validated image media type. */
   mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
   /** Canonical Base64 image payload. */
@@ -42,6 +44,8 @@ export interface VisionEnhancementState {
   providers: readonly VisionProviderView[]
   /** Visual provider model reported by the Host. */
   model: string
+  /** OpenAI-compatible API base URL for the active self-hosted provider. */
+  baseUrl?: string
   /** Latest status or mutation failure. */
   error: string | null
 }
@@ -69,8 +73,29 @@ export class VisionEnhancementController {
         id: 'openrouter', name: 'OpenRouter', configured: false, defaultModel: 'openai/gpt-4.1-mini',
         apiKeyUrl: 'https://openrouter.ai/settings/keys', modelEditable: true,
       },
+      {
+        id: 'ollama', name: 'Ollama（本地）', configured: false, defaultModel: '',
+        apiKeyUrl: 'https://docs.ollama.com/api/openai-compatibility', modelEditable: true,
+        defaultBaseUrl: 'http://127.0.0.1:11434/v1', baseUrlEditable: true, apiKeyRequired: false,
+      },
+      {
+        id: 'vllm', name: 'vLLM（本地）', configured: false, defaultModel: '',
+        apiKeyUrl: 'https://docs.vllm.ai/en/stable/serving/openai_compatible_server/', modelEditable: true,
+        defaultBaseUrl: 'http://127.0.0.1:8000/v1', baseUrlEditable: true, apiKeyRequired: false,
+      },
+      {
+        id: 'sglang', name: 'SGLang（本地）', configured: false, defaultModel: '',
+        apiKeyUrl: 'https://docs.sglang.ai/developer_guide/bench_serving', modelEditable: true,
+        defaultBaseUrl: 'http://127.0.0.1:30000/v1', baseUrlEditable: true, apiKeyRequired: false,
+      },
+      {
+        id: 'custom', name: '自定义 OpenAI-compatible', configured: false, defaultModel: '',
+        apiKeyUrl: 'https://platform.openai.com/docs/api-reference/chat/create', modelEditable: true,
+        baseUrlEditable: true, apiKeyRequired: false,
+      },
     ],
     model: 'qwen3.8-max',
+    baseUrl: '',
     error: null,
   })
 
@@ -118,6 +143,7 @@ export class VisionEnhancementController {
           state.provider = value.provider
           state.providers = value.providers
           state.model = value.model
+          state.baseUrl = value.baseUrl ?? ''
           state.error = null
         })
       } catch (error) {
@@ -160,6 +186,49 @@ export class VisionEnhancementController {
   }
 
   /**
+   * Resolve the Host-authoritative image path for one selected LLM route.
+   * @param modelProvider - Provider id for the selected session model.
+   * @param model - Exact selected model id.
+   * @returns The automatic image route selected by the Host.
+   */
+  async route(modelProvider: string, model: string): Promise<VisionRouteView> {
+    const response = await this.api.vision.route({ modelProvider, model })
+    if (!response.result.ok) throw new Error(response.result.error.message)
+    return response.result.value
+  }
+
+  /**
+   * Enable automatic routing without requiring a compatible-provider key for native vision.
+   * @param modelProvider - Provider id for the selected session model.
+   * @param model - Exact selected model id.
+   * @returns The activated image route selected by the Host.
+   */
+  async activate(modelProvider: string, model: string): Promise<VisionRouteView> {
+    const generation = ++this.generation
+    this.store.update((state) => {
+      state.status = 'saving'
+      state.error = null
+    })
+    try {
+      const response = await this.api.vision.activate({ modelProvider, model })
+      if (!response.result.ok) throw new Error(response.result.error.message)
+      if (generation === this.generation) {
+        this.store.update((state) => {
+          state.status = 'ready'
+          state.enabled = true
+          state.error = null
+        })
+      }
+      return response.result.value
+    } catch (error) {
+      if (generation === this.generation) this.fail(error)
+      throw error
+    } finally {
+      this.flushPendingRefresh()
+    }
+  }
+
+  /**
    * Verify one real image and enable the capability atomically.
    * @param input - Credential and image probe submitted to the Host.
    * @param signal - Optional cancellation signal for the verification request.
@@ -185,6 +254,7 @@ export class VisionEnhancementController {
             ? { ...provider, configured: true }
             : provider)
           state.model = value.model
+          state.baseUrl = value.baseUrl ?? input.baseUrl ?? ''
           state.error = null
         })
       }

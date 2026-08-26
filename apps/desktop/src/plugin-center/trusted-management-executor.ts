@@ -287,6 +287,7 @@ export function createTrustedManagementRunner(options: TrustedManagementExecutor
             candidate,
             priorRuntime,
             replacedCandidate,
+            request.action === 'uninstall' || request.action === 'disable',
           )
       } catch (error) {
         throw failure('runtime-evidence-missing', 'installed plugin runtime transition evidence is incomplete', error)

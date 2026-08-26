@@ -175,8 +175,27 @@ jobs:
             throw "Expected exactly one Windows installer; found $($installers.Count)."
           }
           $installer = $installers[0]
-          $install = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait -PassThru
-          if ($install.ExitCode -ne 0) { throw "Silent install exited with $($install.ExitCode)." }
+
+          function Invoke-HarnessInstaller([string] $label) {
+            $process = Start-Process -FilePath $installer.FullName -ArgumentList '/S' -PassThru
+            if (-not $process.WaitForExit(300000)) {
+              taskkill /PID $process.Id /T /F | Out-Host
+              throw "$label install did not exit within 300 seconds."
+            }
+            $process.WaitForExit()
+            if ($process.ExitCode -ne 0) {
+              throw "$label install exited with $($process.ExitCode)."
+            }
+          }
+
+          function Remove-ApplicationFilesButKeepRegistration([string] $applicationDirectory) {
+            Remove-Item -LiteralPath $applicationDirectory -Recurse -Force
+            if (Test-Path -LiteralPath $applicationDirectory) {
+              throw 'The simulated manually deleted program directory remained.'
+            }
+          }
+
+          Invoke-HarnessInstaller 'fresh'
 
           $applications = @(Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs') `
             -Recurse -File -Filter 'DeepSeek Harness.exe' -ErrorAction SilentlyContinue)
@@ -220,6 +239,18 @@ jobs:
             throw 'The packaged Harness Host did not become observable within 75 seconds.'
           }
 
+          $pnpmCommand = Join-Path $env:DSH_HOME 'preset-runtime\bin\pnpm.cmd'
+          if (-not (Test-Path -LiteralPath $pnpmCommand -PathType Leaf)) {
+            throw "The packaged Host did not expose pnpm at $pnpmCommand."
+          }
+          $packageManager = (Get-Content -Raw (Join-Path $env:GITHUB_WORKSPACE 'package.json') |
+            ConvertFrom-Json).packageManager
+          $expectedPnpmVersion = ($packageManager -split '@')[-1]
+          $pnpmVersion = (& $pnpmCommand --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $pnpmVersion -ne $expectedPnpmVersion) {
+            throw "The bundled pnpm command reported '$pnpmVersion'; expected '$expectedPnpmVersion'."
+          }
+
           taskkill /PID $applicationProcess.Id /T /F | Out-Host
           $uninstallers = @(Get-ChildItem $application.DirectoryName -File -Filter 'Uninstall*.exe')
           if ($uninstallers.Count -ne 1) {
@@ -227,11 +258,53 @@ jobs:
           }
           $uninstall = Start-Process -FilePath $uninstallers[0].FullName -ArgumentList '/S' -Wait -PassThru
           if ($uninstall.ExitCode -ne 0) { throw "Silent uninstall exited with $($uninstall.ExitCode)." }
-          $uninstallDeadline = (Get-Date).AddSeconds(30)
-          while ((Get-Date) -lt $uninstallDeadline -and (Test-Path $application.FullName)) {
+          # NSIS can return from its launcher before the copied background
+          # uninstaller removes the installation directory and exits. Starting
+          # the next installer during that window can block on the old process.
+          $uninstallDeadline = (Get-Date).AddSeconds(90)
+          while ((Get-Date) -lt $uninstallDeadline -and (Test-Path $application.DirectoryName)) {
             Start-Sleep -Seconds 2
           }
-          if (Test-Path $application.FullName) { throw 'The installed application remained after uninstall.' }
+          if (Test-Path $application.DirectoryName) { throw 'The installation directory remained after uninstall.' }
+          $backgroundDeadline = (Get-Date).AddSeconds(60)
+          do {
+            $backgroundUninstallers = @(Get-CimInstance Win32_Process |
+              Where-Object Name -Like 'Uninstall*.exe')
+            if ($backgroundUninstallers.Count -eq 0) { break }
+            Start-Sleep -Seconds 2
+          } while ((Get-Date) -lt $backgroundDeadline)
+          if ($backgroundUninstallers.Count -ne 0) {
+            $backgroundUninstallers |
+              Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine |
+              Format-List |
+              Out-Host
+            throw 'The copied background uninstaller remained after uninstall.'
+          }
+
+          Invoke-HarnessInstaller 'residual-seed'
+          $seedApplications = @(Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs') `
+            -Recurse -File -Filter 'DeepSeek Harness.exe' -ErrorAction SilentlyContinue)
+          if ($seedApplications.Count -ne 1) {
+            throw "Expected one residual-seed application; found $($seedApplications.Count)."
+          }
+          Remove-ApplicationFilesButKeepRegistration ($seedApplications[0].DirectoryName)
+          Invoke-HarnessInstaller 'residual-repair'
+          $repairedApplications = @(Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs') `
+            -Recurse -File -Filter 'DeepSeek Harness.exe' -ErrorAction SilentlyContinue)
+          if ($repairedApplications.Count -ne 1) {
+            throw "Expected one repaired application; found $($repairedApplications.Count)."
+          }
+          $repairedDirectory = $repairedApplications[0].DirectoryName
+          $repairedUninstallers = @(Get-ChildItem $repairedDirectory `
+            -File -Filter 'Uninstall*.exe')
+          if ($repairedUninstallers.Count -ne 1) {
+            throw "Expected one repaired uninstaller; found $($repairedUninstallers.Count)."
+          }
+          $repairedUninstall = Start-Process -FilePath $repairedUninstallers[0].FullName `
+            -ArgumentList '/S' -Wait -PassThru
+          if ($repairedUninstall.ExitCode -ne 0) {
+            throw "Repaired silent uninstall exited with $($repairedUninstall.ExitCode)."
+          }
 
           $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
           $checksum = Join-Path $dist 'SHA256SUMS-windows-x64-preview.txt'
@@ -240,7 +313,10 @@ jobs:
             'native_runner=windows-2025',
             'silent_install=PASS',
             'packaged_host_start=PASS',
+            'bundled_pnpm_command=PASS',
             'silent_uninstall=PASS',
+            'manually_deleted_install_repair=PASS',
+            'repaired_uninstaller=PASS',
             "app_asar_sha256=$env:EXPECTED_APP_ASAR_SHA256",
             "installer_sha256=$hash"
           ) | Set-Content (Join-Path $dist 'WINDOWS_PREVIEW_VERIFICATION.txt') -Encoding ascii

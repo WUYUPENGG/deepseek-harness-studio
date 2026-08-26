@@ -287,6 +287,10 @@ export class PluginRecoveryController {
       )
       try {
         await this.options.runtimeVerifier.verifyHealth(generation.origin)
+      } catch (error) {
+        throw new RecoveryStepError('host-start-failed', { cause: error })
+      }
+      try {
         await this.options.runtimeVerifier.verifyEvidence(generation.origin, priorSnapshot.runtimeEvidence)
       } catch (error) {
         throw new RecoveryStepError('runtime-verification-failed', { cause: error })

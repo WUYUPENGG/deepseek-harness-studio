@@ -120,6 +120,7 @@ describe('Plugin Center recovery diagnostic export', () => {
     })
     const exporter = new PluginRecoveryDiagnosticExporter(
       journal,
+      { desktopVersion: '0.1.0-rc.20', platform: 'win32-x64' },
       () => new Date('2026-08-15T01:00:02.000Z'),
     )
     const destination = join(root, 'exports', 'recovery.json')
@@ -134,9 +135,14 @@ describe('Plugin Center recovery diagnostic export', () => {
     expect(exported).not.toContain('token-canary-never-export')
     expect(exported).not.toContain('content-canary-never-export')
     expect(exported).not.toContain('path-canary-never-export')
+    expect(JSON.parse(exported)).toMatchObject({
+      desktopVersion: '0.1.0-rc.20',
+      platform: 'win32-x64',
+    })
     expect(Object.keys(JSON.parse(exported) as Record<string, unknown>).sort()).toEqual([
-      'action', 'exportedAt', 'journalStatus', 'operationId', 'phaseHistory', 'pluginId', 'profileName',
-      'recoveryAttempt', 'recoveryReasonCode', 'schemaVersion', 'terminalResult', 'version',
+      'action', 'desktopVersion', 'exportedAt', 'journalStatus', 'operationId', 'phaseHistory',
+      'platform', 'pluginId', 'profileName', 'recoveryAttempt', 'recoveryReasonCode', 'schemaVersion',
+      'terminalResult', 'version',
     ])
   })
 
@@ -144,7 +150,10 @@ describe('Plugin Center recovery diagnostic export', () => {
     const root = await temporaryRoot()
     const journal = new PluginOperationJournal(join(root, 'journal'))
     await journal.write(initialRecord())
-    const exporter = new PluginRecoveryDiagnosticExporter(journal)
+    const exporter = new PluginRecoveryDiagnosticExporter(
+      journal,
+      { desktopVersion: '0.1.0-rc.20', platform: 'win32-x64' },
+    )
 
     await expect(exporter.export('operation-1', async () => null)).resolves.toEqual({
       operationId: 'operation-1',
@@ -163,6 +172,7 @@ describe('Plugin Center recovery diagnostic export', () => {
     await writeFile(journal.filename, '{"schemaVersion":999,"token":"secret-canary"}\n')
     const exporter = new PluginRecoveryDiagnosticExporter(
       journal,
+      { desktopVersion: '0.1.0-rc.20', platform: 'win32-x64' },
       () => new Date('2026-08-15T01:00:02.000Z'),
     )
     const destination = join(root, 'unreadable.json')

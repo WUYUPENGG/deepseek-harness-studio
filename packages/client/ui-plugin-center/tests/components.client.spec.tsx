@@ -117,6 +117,19 @@ describe('catalog states', () => {
     expect(list).toHaveBeenCalledWith(expect.objectContaining({ catalogKind: 'skill-pack', scope: 'local' }))
   })
 
+  it('renders actionable discovery context returned by the catalog', async () => {
+    const mapped = {
+      ...listResult({ catalogKind: 'plugin', scope: 'public', query: '', limit: 24 }),
+      notice: 'github-mapped' as const,
+    }
+    render(<PluginCenterTab {...props({
+      list: async () => mapped,
+      refresh: async () => mapped,
+    })} />)
+
+    expect(await screen.findByText(en.githubMapped)).toBeTruthy()
+  })
+
   it('opens installed lifecycle actions from the catalog overflow menu', async () => {
     render(<PluginCenterTab {...props({ mutationsEnabled: true })} />)
 
@@ -297,22 +310,49 @@ describe('recovery state', () => {
         bytes: 2_048,
       }),
     )
-    render(<PluginCenterTab {...props({
+    const manage = vi.fn<PluginCenterTabProps['manage']>(async request => ({
+      kind: 'started',
+      operation: {
+        ...operation(),
+        action: request.action,
+        pluginId: request.pluginId,
+        version: request.version,
+        idempotencyKey: request.idempotencyKey,
+      },
+    }))
+    const view = render(<PluginCenterTab {...props({
+      mutationsEnabled: true,
+      manage,
       getRecovery: async () => failed,
       retryRecovery,
       exportRecoveryDiagnostics,
     })} />)
 
-    expect(await screen.findByText(en.recoveryFailedTitle)).toBeTruthy()
+    expect(await screen.findByText(en.safeModeTitle)).toBeTruthy()
+    expect(screen.getByText(en.safeModeDescription)).toBeTruthy()
     expect(screen.getByText(en.recoveryReasonRuntimeVerificationFailed)).toBeTruthy()
     expect(screen.getByText(new RegExp('runtime-verification-failed'))).toBeTruthy()
     expect(screen.getByText(`${en.recoveryAttempt} 1`)).toBeTruthy()
+    const installedRow = view.container.querySelector('[data-installed-plugin="fixture.workspace-tools"]')
+    expect(installedRow).not.toBeNull()
+    expect(installedRow?.querySelector<HTMLButtonElement>('[data-action="update"]')?.disabled).toBe(true)
+    expect(installedRow?.querySelector<HTMLButtonElement>('[data-action="disable"]')?.disabled).toBe(false)
+    expect(installedRow?.querySelector<HTMLButtonElement>('[data-action="uninstall"]')?.disabled).toBe(false)
+    expect(installedRow?.querySelector<HTMLButtonElement>('[data-action="update"]')?.title)
+      .toBe(en.safeModeActionUnavailable)
+    fireEvent.click(installedRow!.querySelector<HTMLButtonElement>('[data-action="uninstall"]')!)
+    const confirmation = await screen.findByRole('dialog', {
+      name: `${en.confirmUninstallTitle} · Workspace tools`,
+    })
+    fireEvent.click(within(confirmation).getByRole('checkbox', { name: en.confirmUninstallAcknowledge }))
+    fireEvent.click(within(confirmation).getByRole('button', { name: en.uninstallPlugin }))
+    await waitFor(() => { expect(manage).toHaveBeenCalledWith(expect.objectContaining({ action: 'uninstall' })) })
     fireEvent.click(screen.getByRole('button', { name: en.exportDiagnostics }))
     expect(await screen.findByText(en.diagnosticSaved)).toBeTruthy()
     expect(exportRecoveryDiagnostics).toHaveBeenCalledWith({ operationId: 'operation-1' })
 
     fireEvent.click(screen.getByRole('button', { name: en.retryRecovery }))
-    await waitFor(() => { expect(screen.queryByText(en.recoveryFailedTitle)).toBeNull() })
+    await waitFor(() => { expect(screen.queryByText(en.safeModeTitle)).toBeNull() })
     expect(retryRecovery).toHaveBeenCalledWith({ operationId: 'operation-1' })
   })
 
@@ -450,6 +490,7 @@ describe('exact version detail', () => {
       .mockResolvedValueOnce(detailResult(withdrawn))
       .mockResolvedValueOnce(detailResult(null))
       .mockRejectedValueOnce(new Error('gone'))
+      .mockResolvedValueOnce(detailResult(detail()))
     render(<PluginCenterTab {...props({ detail: detailRead })} />)
     const opener = (await screen.findAllByRole('button', { name: `${en.details}：Workspace tools` }))[0]!
 
@@ -461,7 +502,9 @@ describe('exact version detail', () => {
     expect(await screen.findByText(en.detailUnavailable)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.backToCatalog }))
     fireEvent.click(opener)
-    expect((await screen.findByRole('alert')).textContent).toBe(en.detailError)
+    expect((await screen.findByRole('alert')).textContent).toContain(en.detailErrorHint)
+    fireEvent.click(screen.getByRole('button', { name: en.retryDetail }))
+    expect(await screen.findByText('Complete fixture detail.')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.backToCatalog }))
 
     const localEntry = summary('plugin', 'local')

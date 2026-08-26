@@ -18,13 +18,15 @@
     - img
     - text: 关闭
   - heading "模型" [level=2]
-  - paragraph: 填入各提供方的 API 密钥即可使用其模型。
+  - paragraph: 配置云端凭据，或连接本机已经启动的模型服务。
   - list:
     - listitem:
       - text: DeepSeek
       - img "API 密钥已配置"
       - button "编辑 DeepSeek (deepseek-official)": 编辑
-      - text: DeepSeek deepseek-official API 密钥
+      - text: 视觉增强模型
+      - strong: DeepSeek-V4-Flash-Vision-Exp
+      - text: 支持图片 开启“视觉增强”时选用，复用现有 DeepSeek API Key。 DeepSeek deepseek-official API 密钥
       - textbox "API 密钥":
         - /placeholder: 已配置——输入新值可替换
       - group:
@@ -40,33 +42,49 @@
           - textbox "显示名称 1":
             - /placeholder: 显示名称
             - text: DeepSeek-V4-Pro
-          - button "容量 1":
+          - button "高级设置 1":
             - img
           - button "删除模型 1":
             - img
           - textbox "模型 ID 2":
             - /placeholder: 模型 ID
-            - text: private-preview
+            - text: deepseek-v4-flash-vision-exp
           - textbox "显示名称 2":
             - /placeholder: 显示名称
-            - text: Private Preview
-          - button "容量 2" [expanded]:
+            - text: DeepSeek-V4-Flash-Vision-Exp
+          - button "高级设置 2":
             - img
           - button "删除模型 2":
             - img
+          - text: 支持图片
+          - textbox "模型 ID 3":
+            - /placeholder: 模型 ID
+            - text: private-preview
+          - textbox "显示名称 3":
+            - /placeholder: 显示名称
+            - text: Private Preview
+          - button "高级设置 3" [expanded]:
+            - img
+          - button "删除模型 3":
+            - img
           - text: 上下文窗口
-          - textbox "上下文窗口 2":
+          - textbox "上下文窗口 3":
             - /placeholder: 1M
             - text: "131072"
           - text: 最大输出 token 数
-          - textbox "最大输出 token 数 2":
+          - textbox "最大输出 token 数 3":
             - /placeholder: 256K
             - text: 64K
+          - checkbox "允许原生图片请求 3"
+          - text: 允许原生图片请求 仅当该模型接口明确支持图片输入时开启；视觉增强会据此自动选择原生路径。
           - button "添加模型":
             - img
             - text: 添加模型
       - button "取消"
       - button "保存"
+  - button "添加本地模型":
+    - img
+    - text: 添加本地模型
   - button "添加提供方":
     - img
     - text: 添加提供方

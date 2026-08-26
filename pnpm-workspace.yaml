@@ -73,6 +73,8 @@ allowBuilds:
   # electron-builder resolves the optional Squirrel target even though this app
   # does not select it. Its install script only copies a bundled 7-Zip binary.
   electron-winstaller: false
+  # FF - LLM Wiki uses the reviewed native SQLite driver for its persistent knowledge store.
+  better-sqlite3: true
 
 minimumReleaseAgeExclude:
   # Fresh pi-ai releases carry the model catalog updates that are the whole
@@ -90,4 +92,4 @@ minimumReleaseAgeExclude:
 
 patchedDependencies:
   app-builder-lib@26.15.3: patches/app-builder-lib@26.15.3.patch
-  node-pty@1.1.0: patches/node-pty@1.1.0.patch
+  node-pty@1.2.0-beta.15: patches/node-pty@1.2.0-beta.15.patch

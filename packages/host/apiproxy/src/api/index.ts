@@ -64,7 +64,8 @@ export type { SettingsApi, SettingsNamespaceView, SettingsPathOpView, SettingsSe
 export type { CredentialsApi, CredentialView } from './credentials.ts'
 export type { ConfigurableProviderView, DiscoveredModelView, LlmApi } from './llm.ts'
 export type {
-  VisionApi, VisionProvider, VisionProviderView, VisionStatusView, VisionTestView,
+  VisionApi, VisionProvider, VisionProviderView, VisionRouteMode, VisionRouteView,
+  VisionStatusView, VisionTestView,
 } from './vision.ts'
 export type { DownloadsApi } from './downloads.ts'
 export type { ApprovalResponsePayload } from './approvals.ts'

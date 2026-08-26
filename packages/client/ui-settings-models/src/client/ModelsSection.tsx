@@ -16,22 +16,32 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
 import { Button, IconPlusOutline16, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-web-react'
+import type { InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import { CustomProviderCard } from './CustomProviderCard.tsx'
+import {
+  LOCAL_PROVIDER_PRESETS, LOCAL_PROVIDER_PROTOCOL, LocalProviderCard,
+} from './LocalProviderCard.tsx'
 import { deriveKeyRef, messageOf, protocolChoices, providerUsable } from './store.ts'
-import type { ModelsSettingsState, ModelsSettingsStore, ProviderRow } from './store.ts'
+import type { ModelsSettingsStore, ProviderRow } from './store.ts'
+import type { SettingsSchemaOperations } from './schema-operations.ts'
 import { ProviderEditor, type ProviderEditorProps } from './ProviderEditor.tsx'
 import type { en } from './locales.ts'
 import styles from './ModelsSection.module.css'
+
+const DEEPSEEK_NATIVE_VISION_MODEL = 'DeepSeek-V4-Flash-Vision-Exp'
 
 /** Injected dependencies of {@link ModelsSection} (slot `inject`). */
 export interface ModelsSectionInjected {
   /** The page store (loaded on mount, refreshed on pushed invalidations). */
   controller: ModelsSettingsStore
-  /** uSES subscription hook bound to the store. */
-  useSnapshot: SnapshotSelectorHook<ModelsSettingsState>
+  hooks: {
+    /** Page snapshot bound by the UI renderer as useSnapshot. */
+    snapshot: ModelsSettingsStore['store']
+  }
   /** Wire faces the editor writes through. */
   api: Pick<IApiClient, 'settings' | 'credentials' | 'llm'>
+  /** Settings schema and immutable path callbacks. */
+  schema: SettingsSchemaOperations
   /** Section copy. */
   t: (key: keyof typeof en) => string
 }
@@ -40,7 +50,9 @@ export interface ModelsSectionInjected {
  * Props delivered by the slot outlet: the inject face spread flat (the
  * renderer erases the share boundary at the render call).
  */
-export type ModelsSectionProps = Partial<ModelsSectionInjected>
+export type ModelsSectionProps = Partial<InjectFace<ModelsSectionInjected>>
+
+type ModelsSectionFace = InjectFace<ModelsSectionInjected>
 
 /** Provider identity shared by row actions and confirmation copy. */
 export interface ProviderIdentity {
@@ -63,7 +75,7 @@ interface EditorTarget extends ProviderIdentity {
 /** Values that vary around the shared provider-editor rendering. */
 interface ProviderEditorRenderProps extends Pick<
   ProviderEditorProps,
-  'namespace' | 'api' | 't' | 'readOnly' | 'onClose'
+  'namespace' | 'schema' | 'api' | 't' | 'readOnly' | 'onClose'
 > {
   target: EditorTarget
 }
@@ -169,13 +181,16 @@ export function providerCopy(template: string, target: ProviderIdentity): string
  * @returns the section, or null while the shell has not injected yet.
  */
 export function ModelsSection(props: ModelsSectionProps): ReactNode {
-  const { controller, useSnapshot, api, t } = props
-  if (controller === undefined || useSnapshot === undefined || api === undefined || t === undefined) return null
-  return <Loaded injected={{ controller, useSnapshot, api, t }} />
+  const { controller, useSnapshot, api, schema, t } = props
+  if (
+    controller === undefined || useSnapshot === undefined || api === undefined
+    || schema === undefined || t === undefined
+  ) return null
+  return <Loaded injected={{ controller, useSnapshot, api, schema, t }} />
 }
 
-function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
-  const { controller, api, t } = injected
+function Loaded({ injected }: { injected: ModelsSectionFace }): ReactNode {
+  const { controller, api, schema, t } = injected
   const state = injected.useSnapshot(snapshot => snapshot)
   const [editing, setEditing] = useState<EditorTarget | undefined>(undefined)
   const [adding, setAdding] = useState(false)
@@ -184,6 +199,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
   const [deleteFailure, setDeleteFailure] = useState<string | undefined>(undefined)
   const [savedTarget, setSavedTarget] = useState<ProviderIdentity | undefined>(undefined)
   const [declaring, setDeclaring] = useState(false)
+  const [addingLocal, setAddingLocal] = useState(false)
   const [dismissedSetup, setDismissedSetup] = useState<ReadonlySet<string>>(() => new Set())
 
   const announceSaved = (target: ProviderIdentity): void => {
@@ -197,6 +213,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
     setEditing(undefined)
     setAdding(false)
     setDeclaring(false)
+    setAddingLocal(false)
     if (changed) announceSaved(target)
   }
 
@@ -269,7 +286,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
   // Hand-declared routes live in the pi-ai namespace, which is also the only
   // one whose schema names the protocols one may speak; without it mounted
   // there is nothing to declare and the entry point stays disabled.
-  const protocols = protocolChoices(state.namespaces.get('llm-pi-ai'))
+  const protocols = protocolChoices(state.namespaces.get('llm-pi-ai'), schema)
 
   return (
     <div className={styles['section']}>
@@ -297,6 +314,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                 {renderProviderEditor({
                   target,
                   namespace,
+                  schema,
                   api,
                   t,
                   readOnly: !state.writable,
@@ -305,7 +323,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
               </li>
             )
           }
-          const open = !adding && editing?.provider === row.entry.provider
+          const open = !adding && !addingLocal && editing?.provider === row.entry.provider
           const credentialConfigured = row.credential?.configured === true
           const credentialMissing = !credentialConfigured
             && row.apiKeyEnv !== undefined
@@ -352,6 +370,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                       // the create card beside this editor, and closing either
                       // one discards the other's draft.
                       setDeclaring(false)
+                      setAddingLocal(false)
                       setAdding(false)
                       setEditing(open ? undefined : target)
                     }}
@@ -377,10 +396,21 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                     : null}
                 </span>
               </div>
+              {row.entry.provider === 'deepseek-official'
+                ? (
+                  <div className={styles['nativeVisionSummary']}>
+                    <span className={styles['nativeVisionSummaryLabel']}>{t('nativeVisionAvailable')}</span>
+                    <strong>{DEEPSEEK_NATIVE_VISION_MODEL}</strong>
+                    <span className={styles['imageInputBadge']}>{t('imageInputBadge')}</span>
+                    <span className={styles['nativeVisionSummaryHint']}>{t('nativeVisionSharedKey')}</span>
+                  </div>
+                )
+                : null}
               {open
                 ? renderProviderEditor({
                   target,
                   namespace,
+                  schema,
                   api,
                   t,
                   readOnly: !state.writable,
@@ -392,99 +422,134 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
         })}
       </ul>
       <div className={styles['addBlock']}>
-        {addTarget !== undefined && addNamespace !== undefined
+        {addingLocal
           ? (
             <div className={styles['addCard']}>
-              <div className={styles['field']}>
-                <span className={styles['fieldLabel']}>{t('provider')}</span>
-                <select
-                  className={`${styles['input']} ${styles['selectInput']}`}
-                  value={addTarget.provider}
-                  aria-label={t('provider')}
-                  onChange={(event) => {
-                    const row = addable.find(candidate => candidate.entry.provider === event.target.value)
-                    /* v8 ignore next -- the select only lists addable rows */
-                    if (row === undefined) return
-                    setEditing(targetOf(row))
-                  }}
-                >
-                  {addable.map(row => (
-                    <option key={row.entry.provider} value={row.entry.provider}>{row.entry.displayName}</option>
-                  ))}
-                </select>
-              </div>
-              <ProviderEditor
-                key={addTarget.provider}
-                provider={addTarget.provider}
-                displayName={addTarget.displayName}
-                hideTitle
-                namespace={addNamespace}
-                settingsPath={addTarget.settingsPath}
+              <LocalProviderCard
+                taken={state.rows.map(row => row.entry.provider)}
+                protocols={protocols}
+                /* v8 ignore next -- the entry is disabled without this namespace */
+                revision={state.namespaces.get('llm-pi-ai')?.revision ?? 0}
                 api={api}
                 t={t}
                 readOnly={!state.writable}
-                onClose={(changed) => { closeEditor(changed, addTarget) }}
+                onClose={(changed) => {
+                  setAddingLocal(false)
+                  if (changed) void controller.load()
+                }}
               />
             </div>
           )
-          : declaring
+          : addTarget !== undefined && addNamespace !== undefined
             ? (
               <div className={styles['addCard']}>
-                <CustomProviderCard
-                  taken={state.rows.map(row => row.entry.provider)}
-                  protocols={protocols}
-                  /* v8 ignore next -- the card only opens from a button disabled without this namespace */
-                  revision={state.namespaces.get('llm-pi-ai')?.revision ?? 0}
+                <div className={styles['field']}>
+                  <span className={styles['fieldLabel']}>{t('provider')}</span>
+                  <select
+                    className={`${styles['input']} ${styles['selectInput']}`}
+                    value={addTarget.provider}
+                    aria-label={t('provider')}
+                    onChange={(event) => {
+                      const row = addable.find(candidate => candidate.entry.provider === event.target.value)
+                      /* v8 ignore next -- the select only lists addable rows */
+                      if (row === undefined) return
+                      setEditing(targetOf(row))
+                    }}
+                  >
+                    {addable.map(row => (
+                      <option key={row.entry.provider} value={row.entry.provider}>{row.entry.displayName}</option>
+                    ))}
+                  </select>
+                </div>
+                <ProviderEditor
+                  key={addTarget.provider}
+                  provider={addTarget.provider}
+                  displayName={addTarget.displayName}
+                  hideTitle
+                  namespace={addNamespace}
+                  schema={schema}
+                  settingsPath={addTarget.settingsPath}
                   api={api}
                   t={t}
                   readOnly={!state.writable}
-                  onClose={(changed) => {
-                    setDeclaring(false)
-                    if (changed) void controller.load()
-                  }}
+                  onClose={(changed) => { closeEditor(changed, addTarget) }}
                 />
               </div>
             )
-            : (
-              // One row for the two ways to gain a provider: adopt one the
-              // adapter already knows, or declare one it does not. Side by side
-              // and equal-width so they read as siblings and line up with the
-              // rows above, rather than two pills of different lengths.
-              <div className={styles['addActions']}>
-                <button
-                  type="button"
-                  className={styles['addButton']}
-                  disabled={addable.length === 0 || !state.writable}
-                  onClick={() => {
-                    const first = addable[0]
-                    /* v8 ignore next -- the button is disabled while nothing is addable */
-                    if (first === undefined) return
-                    setSavedTarget(undefined)
-                    setDeclaring(false)
-                    setAdding(true)
-                    setEditing(targetOf(first))
-                  }}
-                >
-                  {/* Same glyph as the composer's attach button. */}
-                  <IconPlusOutline16 size={14} />
-                  {t('add')}
-                </button>
-                <button
-                  type="button"
-                  className={styles['addButton']}
-                  disabled={protocols.length === 0 || !state.writable}
-                  onClick={() => {
-                    setSavedTarget(undefined)
-                    setAdding(false)
-                    setEditing(undefined)
-                    setDeclaring(true)
-                  }}
-                >
-                  <IconPlusOutline16 size={14} />
-                  {t('customAdd')}
-                </button>
-              </div>
-            )}
+            : declaring
+              ? (
+                <div className={styles['addCard']}>
+                  <CustomProviderCard
+                    taken={state.rows.map(row => row.entry.provider)}
+                    protocols={protocols}
+                    /* v8 ignore next -- the card only opens from a button disabled without this namespace */
+                    revision={state.namespaces.get('llm-pi-ai')?.revision ?? 0}
+                    api={api}
+                    t={t}
+                    readOnly={!state.writable}
+                    onClose={(changed) => {
+                      setDeclaring(false)
+                      if (changed) void controller.load()
+                    }}
+                  />
+                </div>
+              )
+              : (
+              // Catalog, local-server, and manual routes share one creation row.
+                <div className={styles['addActions']}>
+                  <button
+                    type="button"
+                    className={styles['addButton']}
+                    disabled={LOCAL_PROVIDER_PRESETS.every(preset => state.rows.some(
+                      row => row.entry.provider === preset.route,
+                    )) || !protocols.includes(LOCAL_PROVIDER_PROTOCOL) || !state.writable}
+                    onClick={() => {
+                      setSavedTarget(undefined)
+                      setDeclaring(false)
+                      setAdding(false)
+                      setEditing(undefined)
+                      setAddingLocal(true)
+                    }}
+                  >
+                    <IconPlusOutline16 size={14} />
+                    {t('localAdd')}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles['addButton']}
+                    disabled={addable.length === 0 || !state.writable}
+                    onClick={() => {
+                      const first = addable[0]
+                      /* v8 ignore next -- the button is disabled while nothing is addable */
+                      if (first === undefined) return
+                      setSavedTarget(undefined)
+                      setDeclaring(false)
+                      setAddingLocal(false)
+                      setAdding(true)
+                      setEditing(targetOf(first))
+                    }}
+                  >
+                    {/* Same glyph as the composer's attach button. */}
+                    <IconPlusOutline16 size={14} />
+                    {t('add')}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles['addButton']}
+                    disabled={protocols.length === 0 || !state.writable}
+                    onClick={() => {
+                      setSavedTarget(undefined)
+                      setAddingLocal(false)
+                      setAdding(false)
+                      setEditing(undefined)
+                      setDeclaring(true)
+                    }}
+                  >
+                    <IconPlusOutline16 size={14} />
+                    {t('customAdd')}
+                  </button>
+                </div>
+              )}
       </div>
       <Modal
         open={deleteTarget !== undefined}

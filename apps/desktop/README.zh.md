@@ -30,23 +30,29 @@ Electron 中的工作区选择通过固定 preload 方法调用 main 进程的 `
 
 ### 插件中心可信生命周期
 
-Desktop 持有插件中心发现、兼容与包变更权威。公开发现会在 npm 搜索带 `dsh-plugin` 标签的包；DeepSeek Harness 文档把该标签定义为生态发现约定，但标签不代表官方背书。目录只保留声明 `dsh.bundle` 的确定版本；获得安装权威前，Desktop 会下载其不可变 npm tarball，并校验 registry 完整性、SHA-256、压缩包边界、包身份、Bundle patch 与激活身份。沙箱渲染器只能调用固定目录和操作方法，安装意图只包含插件 id、确定版本与幂等键。
+Desktop 持有插件中心发现、兼容与包变更权威。公开发现会合并 npm `dsh-plugin` 约定、有界文本查询、完整 scoped 包名直查，以及明确 `https://github.com/<owner>/<repo>` 仓库解析；短名与完整 scoped 名都可使用。只要有界文本查询成功，即使并发的关键词全量索引暂时不可用，精确文本匹配也会继续展示，因此 npm 对宽泛索引的限流不会隐藏目标包。关键词和 GitHub 映射只是发现信号，不代表官方背书或安装权威；Desktop 不会 clone、构建或直接安装 GitHub 源码。目录只允许固定 npm Registry 中声明 `dsh.bundle` 的确定版本继续；缓存候选形成权威前必须重新读取，每次查询最多为排序后的 96 个候选读取确定元数据。确定详情补全会针对一次临时连接错误、408/425/429 或 5xx 失败重试一次，并在有界范围内遵循 `Retry-After`；结构校验失败绝不重试。随后 Desktop 下载不可变 npm tarball，并校验 registry 完整性、SHA-256、压缩包边界、包身份、Host 同源 YAML schema 下的 Bundle patch、聚合包确定依赖与激活身份。Loader 条目可以使用由该 Bundle 包自身持有、且经过校验的 npm 导出子路径，例如 `dsh-builtin-browser/browser`；不安全或未声明的包引用仍会被拒绝。Bundle 可以复用封闭 Desktop Host 依赖表中的模块，持久权威同时按该依赖表的确定指纹隔离。Desktop 会在 Host 启动前通过受管命令目录原子暴露打包内精确 pnpm 入口，因此即使图形界面启动没有终端 PATH、npm 或 Corepack，Host 插件仍可解析 `pnpm`。沙箱渲染器只能调用固定目录和操作方法，安装意图只包含插件 id、确定版本与幂等键。
 
-同一个串行事务持有安装、启用、停用、确定更新和卸载。它在变更前快照 Profile，保留明确的活动或停用 Bundle 意图，在替换或删除包前停止 Host，并且只在目标 Profile 与已声明 Host、客户端和 Skill 证据一致后提交。连续性核对只排除属于实时预设实例、无法跨 Host 换代保持的 `include:agent-presets:*` Loader 子项；已声明目标证据、其 `agent-presets` 所有者条目、其他全部无关 Loader 条目、客户端模块和 Skill 仍为必需证据。卸载默认保留配置与插件自有数据；提交后的独立桥接只能删除插件存储根下的确定声明路径。普通 Host 启动前，Desktop 会停用与当前应用版本不兼容的已校验外部 Bundle，同时保留包和可解释原因。生产 preload 已通过带恢复能力的控制器开放这些操作。
+同一个串行事务持有安装、启用、停用、确定更新和卸载。它在变更前快照 Profile，保留明确的活动或停用 Bundle 意图，在替换或删除包前停止 Host，并且只在目标 Profile 与已声明 Host、客户端和 Skill 证据一致后提交。连续性核对会排除属于实时预设实例、无法跨 Host 换代保持的 `include:agent-presets:*` Loader 子项。停用或卸载时，如果插件注册了 Skill 却没有把它写入 `expectedSkillIds`，校验器也允许该 Skill 随目标插件消失；已声明目标身份、其 `agent-presets` 所有者条目，以及全部无关 Loader 条目和客户端模块仍为必需证据。卸载默认保留配置与插件自有数据；提交后的独立桥接只能删除插件存储根下的确定声明路径。Host 换代时会保留桌面端最后一帧，直至新页面完成绘制，因此成功变更不会暴露中间导航。已安装管理器处于展开状态时，一项白名单 renderer URL 标记会把该子页面带入替换 Host，其他任意查询状态不会被迁移。普通 Host 启动前，Desktop 会停用与当前应用版本不兼容的已校验外部 Bundle，同时保留包和可解释原因。它还会在确认所选 Profile 已持有实际安装的 `dshmarket` Bundle 后，仅移除旧版手动插入的重复 `dshmarket`；按 id 覆盖的设置与其他 patch 均保持不变。生产 preload 已通过带恢复能力的控制器开放这些操作。
 
-未提交日志在普通 Host 启动前进入恢复。变更副作用会持久记录前后边界，因此 Host 停止、Profile 或包变更、Host 启动和页面重连前后的中断都进入同一恢复路径。恢复控制器校验旧快照、重建旧包状态并核对旧 Host、客户端和 Skill 证据；失败时只打开受保护恢复页，允许同事务重试和脱敏诊断导出。损坏或未来版本日志不会被猜测执行。公开变更仍需等待 Windows x64 包体崩溃验收。
+### Preset 广场安装
+
+Desktop 持有 Preset 广场的网络访问权威，只接受渲染器提交的闭合排序、搜索文本、slug 和可选本地目标 id。它仅从 `https://www.dshdesktop.com/preset/` 读取元数据和归档，拒绝重定向，限制响应大小，安装前重新解析详情，并在把字节发送给环回 Host 导入器前校验公开的归档大小与 SHA-256。渲染器不能提交 URL、归档、文件系统路径或 Host origin。
+
+应用在 `resources/preset-square/presets/` 内随包交付七套精简能力包，目录来源统一显示为 **赋范官方**：AI WebApp、PPT Office、视频生成、内容工厂、AI 报表、飞书数字员工和 LLM Wiki Producer；最后一套会安装用于分阶段开发与验证企业知识库项目的「LLM Wiki 全栈工程师」Agent Preset。“赋范官方”表示由赋范桌面端开发团队维护，不代表 DeepSeek Harness 官方。Desktop 从只读资源生成确定且经完整性校验的归档，Host 仍把它们安装到可写的用户 Preset 根目录，因此可删除和重新安装。
+
+未提交日志在普通 Host 启动前进入恢复。变更副作用会持久记录前后边界，因此 Host 停止、Profile 或包变更、Host 启动和页面重连前后的中断都进入同一恢复路径。恢复控制器校验旧快照、重建旧包状态并核对旧 Host、客户端和 Skill 证据；快照、Profile、依赖、锁或 Host 健康检查失败时继续只打开受保护恢复页，并允许同事务重试和脱敏诊断导出。只有恢复后的 Host 已通过健康检查、但确定运行清单仍不一致时，Desktop 才会用正常渲染器直接打开插件中心的受限安全模式：目录浏览、重试、诊断、配置、停用与卸载可用，安装、更新与启用保持关闭，直到恢复通过或安全清理成功提交（[决策](../../.agents/notes/implemented/bug-fix/2026-08-24-plugin-recovery-safe-mode.zh.md)）。损坏或未来版本日志不会被猜测执行。
 
 确定的浏览器验收使用 `pnpm run dev:desktop:web` 并复用同一组客户端组件与进度合同。该开发桥接只模拟阶段和持久状态，不拥有 Electron、Profile、文件系统、包管理器、MCP 或 Host 重启权威。
 
 ## 打包
 
-本地打包命令会执行完整的仓库构建，为 Host 暂存封闭的生产依赖树，并为当前平台生成未封装应用。无需另行手动构建：
+本地打包命令会先从源码重新构建随包的 FF–LLM Wiki 应用，再执行完整的仓库构建，为 Host 暂存封闭的生产依赖树，并为当前平台生成未封装应用。生成的应用产物保持忽略，不作为干净发布 checkout 的事实源。无需另行手动构建：
 
 ```sh
 pnpm run package:desktop
 ```
 
-打包后的应用通过 Electron 的 Node 模式，在独立进程内运行已暂存的 `@deepseek-ai/dsh` CLI。应用因此保留受 supervisor 管理的 Host 生命周期，无需携带第二个 Node 可执行文件。如果暂存的 CLI 入口、Web 前端入口、通用 HTTPS 更新提供方或明确更新渠道缺失，`afterPack` 检查会在签名前拒绝该产物。同一钩子会为所有目标写入 `app-update.yml`，包括预览压缩包使用的未封装目录。预览包因此会请求已经发布的 `rc-mac.yml` 或 `rc.yml`，而不是 Electron 默认但并不存在的渠道文件，并能把同版本更新源正确识别为“已是最新”。macOS 和 Windows 都从受跟踪、带透明圆角的 `apps/desktop/build/icon.png` 派生平台图标；仓库不提交独立的平台专用变体。
+打包后的应用通过 Electron 的 Node 模式，在独立进程内运行已暂存的 `@deepseek-ai/dsh` CLI。应用因此保留受 supervisor 管理的 Host 生命周期，无需携带第二个 Node 可执行文件。如果暂存的 CLI 入口、Web 前端入口、通用 HTTPS 更新提供方或明确更新渠道缺失，`afterPack` 检查会在签名前拒绝该产物；它还会核验 Harness 图片管线所需的 macOS arm64 或 Windows x64 Sharp 原生模块。同一钩子会为所有目标写入 `app-update.yml`，包括预览压缩包使用的未封装目录。预览包因此会请求已经发布的 `rc-mac.yml` 或 `rc.yml`，而不是 Electron 默认但并不存在的渠道文件，并能把同版本更新源正确识别为“已是最新”。macOS 和 Windows 都从受跟踪、带透明圆角的 `apps/desktop/build/icon.png` 派生平台图标；仓库不提交独立的平台专用变体。
 
 ### 已签名的 macOS DMG 与 ZIP
 
@@ -102,17 +108,17 @@ pnpm run publish:desktop-update -- \
 
 ### Windows x64 NSIS 安装包
 
-使用以下命令构建当前用户安装、双击即用的 Windows x64 安装包：
+使用以下命令构建引导式 Windows x64 安装包：
 
 ```sh
 pnpm run dist:win:desktop
 ```
 
-该命令会构建完整工作区、暂存面向 Windows 的 Host 运行时，核验 Koffi、Sharp 和 node-pty 所需的 x64 原生模块，再生成 `.exe` 安装包、blockmap 与更新元数据。macOS 交叉构建会把 Electron Builder 的 NSIS 模板映射到一个较短的临时路径，因为 NSIS 在 POSIX include 路径上仍使用固定的 260 字符缓冲区；构建结束后会删除该临时符号链接。
+引导流程默认安装给当前用户，也允许选择所有用户安装和自定义安装目录。该命令会构建完整工作区、暂存面向 Windows 的 Host 运行时，移除 Node 运行时不会加载的声明文件与 source map，核验 Koffi、Sharp 和 node-pty 所需的 x64 原生模块，再生成 `.exe` 安装包、blockmap 与更新元数据。macOS 交叉构建会把 Electron Builder 的 NSIS 模板映射到一个较短的临时路径，因为 NSIS 在 POSIX include 路径上仍使用固定的 260 字符缓冲区；构建结束后会删除该临时符号链接。
 
-替换现有安装前，NSIS 安装程序会请求正在运行的单实例进入普通显式退出路径，并等待受 supervisor 管理的 Host 完全停稳。随后，自定义的运行中应用检查会终止任何残留的 `DeepSeek Harness.exe` 进程树，并替换 Electron Builder 的通用提示循环，因此常驻托盘或较旧的应用既无法继续锁定安装目录，也不会再要求人工重试。公开的 `0.1.0-rc.5` 包还会走一条按版本限定的原位替换路径：跳过已知缓慢的旧卸载器，由新载荷覆盖应用目录，并立即重建卸载注册信息。Profile 数据位于应用目录之外，不受该替换影响。
+替换或移除现有安装前，NSIS 会请求正在运行的单实例进入普通显式退出路径，最多等待五秒让 supervisor 管理的 Host 停稳，再以两次有界尝试终止任何残留的 `DeepSeek Harness.exe` 进程树。如果仍有进程占用安装目录，操作会明确失败，不会留下半卸载状态。如果手动删除或卸载失败留下损坏的注册信息和不完整的专属 `DeepSeek Harness` 应用目录，替换程序会自动清理残留、跳过不可用的旧卸载器、写入干净载荷并重建卸载注册信息。公开的 `0.1.0-rc.5` 至 `0.1.0-rc.9` 安装都走同一修复路径。Profile 数据位于应用目录之外，不受该替换影响。
 
-在配置 Windows Authenticode 证书前，内部测试安装包保持未签名。测试者核对已发布的 SHA-256 后，SmartScreen 可能仍要求选择“更多信息”→“仍要运行”。不需要关闭 Defender。实际启动与卸载验收仍必须在 Windows 10/11 x64 上完成。
+在配置 Windows Authenticode 证书前，内部测试安装包保持未签名。测试者核对已发布的 SHA-256 后，SmartScreen 可能仍要求选择“更多信息”→“仍要运行”。不需要关闭 Defender。原生 Windows 生命周期工作流会安装到非默认目录，启动打包 Host，在应用仍运行时卸载，再安装到同一目录，模拟应用目录已手动删除但注册表仍残留的状态，完成修复后重复启动与卸载检查。
 
 ## 已知限制
 

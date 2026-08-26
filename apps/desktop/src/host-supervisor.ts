@@ -120,7 +120,7 @@ export interface HostGeneration {
 }
 
 /** Detail reported when the currently owned ready generation exits by itself. */
-export interface HostUnexpectedExit extends HostGeneration {
+interface HostUnexpectedExit extends HostGeneration {
   /** Child exit code, when the operating system supplied one. */
   readonly code: number | null
   /** Child termination signal, when the operating system supplied one. */
@@ -388,7 +388,16 @@ export function spawnDshWeb(options: SpawnDshWebOptions): HostChild {
   const env = options.electronRunAsNode
     ? { ...options.env, ELECTRON_RUN_AS_NODE: '1' }
     : options.env
-  const process = spawn(options.nodeExecutable, ['--expose-internals', options.cliEntry, 'web', '--host', '127.0.0.1', '--port', '0'], {
+  const process = spawn(options.nodeExecutable, [
+    '--expose-internals',
+    options.cliEntry,
+    'web',
+    '--no-open',
+    '--host',
+    '127.0.0.1',
+    '--port',
+    '0',
+  ], {
     cwd: options.cwd,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],

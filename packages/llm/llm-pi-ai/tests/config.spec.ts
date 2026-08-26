@@ -64,3 +64,39 @@ describe('modality schema boundary', () => {
     expect(absent.providers['acme-gateway']?.defaultInput).toEqual(['text'])
   })
 })
+
+describe('unauthenticated OpenAI-compatible routes', () => {
+  it('accepts the explicit OpenAI-compatible posture and rejects other protocols', () => {
+    const resolved = (profile: Record<string, unknown>): (() => void) => () => {
+      assertServiceable(routeWith(profile)() as Config)
+    }
+    expect(resolved({ allowUnauthenticated: true })).not.toThrow()
+    expect(resolved({ allowUnauthenticated: true, api: 'anthropic-messages' }))
+      .toThrow(/only with an explicit OpenAI-compatible api/)
+    expect(resolved({ allowUnauthenticated: true, api: undefined }))
+      .toThrow(/only with an explicit OpenAI-compatible api/)
+  })
+})
+
+describe('request image policy bounds', () => {
+  it.each([
+    ['requestImagePixelBudget', 0, /requestImagePixelBudget must be a positive safe integer/],
+    ['requestImagePixelBudget', Number.MAX_SAFE_INTEGER + 1, /requestImagePixelBudget must be a positive safe integer/],
+    ['requestImageMaxBytes', 0, /requestImageMaxBytes must be a positive safe integer/],
+    ['requestImageMaxBytes', 1.5, /requestImageMaxBytes must be a positive safe integer/],
+  ] as const)('rejects %s=%s at service resolution', (field, value, message) => {
+    const programmatic = {
+      providers: {
+        'acme-gateway': {
+          api: 'openai-completions',
+          baseURL: 'https://acme.test',
+          models: [{ id: 'm' }],
+          [field]: value,
+        },
+      },
+    } as unknown as Config
+    expect(() => {
+      assertServiceable(programmatic)
+    }).toThrow(message)
+  })
+})

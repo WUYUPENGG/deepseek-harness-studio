@@ -72,15 +72,16 @@ describe('CodeBlock', () => {
     expect(view.getByText('plain text')).toBeTruthy()
   })
 
-  it('shows the language banner and copies the pre textContent', async () => {
+  it('shows the language banner and copies the source instead of rendered DOM text', async () => {
     vi.useFakeTimers()
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
       value: { writeText },
     })
-    render(<CodeBlock code={'const a = 1\n'} lang="ts" />)
+    const view = render(<CodeBlock code={'const a = 1\n'} lang="ts" />)
     expect(screen.getByText('ts')).toBeTruthy()
+    view.container.querySelector('pre')!.textContent = 'stale rendered text'
     fireEvent.click(screen.getByRole('button', { name: '复制' }))
     expect(writeText).toHaveBeenCalledWith('const a = 1')
     // Flush the clipboard promise under fake timers before asserting the label.

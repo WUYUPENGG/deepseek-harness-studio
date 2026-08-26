@@ -14,6 +14,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import z from '@deepseek-ai/schemastery'
 import { MAX_TIMER_DELAY_MS } from '@deepseek-ai/dsh-timeout'
 import { RECONNECT_DEFAULTS, resolveReconnectPolicy, startConnection } from './connection.ts'
@@ -62,6 +63,11 @@ export interface StdioConfig {
   args: string[]
   /** Extra env vars merged on top of scrubbed ambient env. */
   env: Record<string, string>
+  /**
+   * Child env name -> managed credential reference. Values are resolved only
+   * while starting this MCP connection and never enter the authored config.
+   */
+  credentialEnv?: Record<string, string>
   /** Working directory for the child process. */
   cwd: string
   /** Per-tool-call timeout in milliseconds. */
@@ -111,6 +117,7 @@ export const Config = z.union([
     command: z.string().required(),
     args: z.array(String).default([]),
     env: z.dict(String).default({}),
+    credentialEnv: z.dict(String).default({}),
     cwd: z.string().default(''),
     toolCallTimeoutMs: z.number().default(DEFAULT_TOOL_CALL_TIMEOUT_MS),
     failOnStartupError: z.boolean().default(false),
@@ -127,6 +134,26 @@ export const Config = z.union([
   }),
 ]) as unknown as z<Config>
 
+/** Resolve explicitly declared credential references into one stdio child env. */
+async function resolveCredentialEnv(ctx: Context, config: Config): Promise<Config> {
+  if (config.transport !== 'stdio' || Object.keys(config.credentialEnv ?? {}).length === 0) return config
+  const credentials = ctx.get('credentials')
+  if (credentials === undefined) {
+    throw new Error(`mcp-client(${config.serverName}): managed credentials are unavailable in this deployment`)
+  }
+  const env = { ...config.env }
+  const missing: string[] = []
+  for (const [name, ref] of Object.entries(config.credentialEnv ?? {})) {
+    const resolved = await credentials.resolve(credentialRef(ref))
+    if (resolved === undefined) missing.push(ref)
+    else env[name] = resolved.value
+  }
+  if (missing.length > 0) {
+    throw new Error(`mcp-client(${config.serverName}): missing required credentials: ${missing.join(', ')}`)
+  }
+  return { ...config, env }
+}
+
 // ---- Plugin apply ----
 
 /**
@@ -138,6 +165,7 @@ export const Config = z.union([
  * @returns startup readiness after connection and initial tool discovery settle.
  */
 export async function apply(ctx: Context, config: Config): Promise<void> {
+  const runtimeConfig = await resolveCredentialEnv(ctx, config)
   // Fail loud at load: reconnect misconfiguration (including programmatic
   // construction that bypassed Schemastery) rejects THIS instance before any
   // effect registers.
@@ -163,7 +191,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // The supervisor owns the client/transport generations, the reconnect
   // loop, and the live tool registrations; disposal stops reconnection,
   // quiesces in-flight work, and unregisters the current generation.
-  const connection = startConnection(ctx, config, reconnect)
+  const connection = startConnection(ctx, runtimeConfig, reconnect)
 
   ctx.effect(() => {
     return () => connection.dispose()

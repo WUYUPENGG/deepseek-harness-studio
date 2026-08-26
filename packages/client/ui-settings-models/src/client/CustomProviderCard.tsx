@@ -46,6 +46,20 @@ const NS = 'llm-pi-ai'
  */
 const ROUTE_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 
+/** Initial values supplied by a first-party setup shortcut. */
+export interface CustomProviderInitialValues {
+  /** Stable route id written under `providers`. */
+  route: string
+  /** Human-facing provider name. */
+  displayName: string
+  /** OpenAI-compatible API root. */
+  baseURL: string
+  /** Wire protocol selected in the pi-ai profile. */
+  protocol: string
+  /** Permit an OpenAI-compatible local endpoint to run without a user credential. */
+  allowUnauthenticated?: boolean
+}
+
 /** Props of {@link CustomProviderCard}. */
 export interface CustomProviderCardProps {
   /** Route ids already declared, so the card refuses to shadow one. */
@@ -64,6 +78,10 @@ export interface CustomProviderCardProps {
   t: (key: keyof typeof en) => string
   /** Disable writes (read-only settings provider). */
   readOnly: boolean
+  /** Optional first-party defaults for a guided provider setup. */
+  initial?: CustomProviderInitialValues
+  /** Guided local-provider copy instead of the generic custom-provider copy. */
+  variant?: 'custom' | 'local'
   /** Close the card; `changed` reports whether a provider was created. */
   onClose: (changed: boolean) => void
 }
@@ -78,10 +96,14 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
   // Captured at mount, like the editor's: the write must be judged against the
   // section this card was drafted over, not whatever it grew into meanwhile.
   const [openedAt] = useState(() => props.revision)
-  const [route, setRoute] = useState('')
-  const [displayName, setDisplayName] = useState('')
-  const [baseURL, setBaseURL] = useState('')
-  const [protocol, setProtocol] = useState(protocols[0] ?? '')
+  const [route, setRoute] = useState(props.initial?.route ?? '')
+  const [displayName, setDisplayName] = useState(props.initial?.displayName ?? '')
+  const [baseURL, setBaseURL] = useState(props.initial?.baseURL ?? '')
+  const [protocol, setProtocol] = useState(
+    props.initial !== undefined && protocols.includes(props.initial.protocol)
+      ? props.initial.protocol
+      : protocols[0] ?? '',
+  )
   const [keyDraft, setKeyDraft] = useState('')
   const [models, setModels] = useState<readonly ModelDraft[]>([])
   const [busy, setBusy] = useState(false)
@@ -123,10 +145,10 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
     || route.length === 0 || routeInvalid || routeTaken
     ? undefined
     : baseURL.length === 0
-      ? t('customNeedsBaseUrl')
+      ? t(props.variant === 'local' ? 'localNeedsBaseUrl' : 'customNeedsBaseUrl')
       : modelFailure !== undefined
         ? `${t('model')} ${String(modelFailure.index + 1)}: ${t(modelFailure.key)}`
-        : t('customNeedsModels')
+        : t(props.variant === 'local' ? 'localNeedsModels' : 'customNeedsModels')
 
   /** Perform the create, returning a failure message or undefined. */
   const createOnce = async (): Promise<string | undefined> => {
@@ -143,6 +165,7 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
         api: protocol,
         baseURL,
         models: models.map(model => ({ ...model })),
+        ...(props.initial?.allowUnauthenticated === true ? { allowUnauthenticated: true } : {}),
       }
       const response = await api.settings.mutate({
         ns: NS,
@@ -190,37 +213,45 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
   return (
     <div className={styles['editor']}>
       <div className={styles['editorHeader']}>
-        <span className={styles['editorTitle']}>{t('customTitle')}</span>
+        <span className={styles['editorTitle']}>
+          {props.variant === 'local'
+            ? `${t('localEditorTitle')} · ${displayName}`
+            : t('customTitle')}
+        </span>
       </div>
-      <div className={styles['field']}>
-        <span className={styles['fieldLabel']}>{t('customRoute')}</span>
-        <input
-          className={styles['input']}
-          type="text"
-          value={route}
-          placeholder="acme-gateway"
-          aria-label={t('customRoute')}
-          disabled={profileDisabled}
-          onChange={(event) => { setRoute(event.target.value) }}
-        />
-      </div>
-      {/* A rejected id reads as a fault, not as guidance — the same split the
-          key field below already makes between its failure and its hint. */}
-      {routeInvalid || routeTaken
-        ? <p className={styles['error']}>{t(routeInvalid ? 'customRouteInvalid' : 'customRouteTaken')}</p>
-        : <p className={styles['advancedHint']}>{t('customRouteHint')}</p>}
-      <div className={styles['field']}>
-        <span className={styles['fieldLabel']}>{t('customDisplayName')}</span>
-        <input
-          className={styles['input']}
-          type="text"
-          value={displayName}
-          placeholder={route.length === 0 ? t('customDisplayName') : route}
-          aria-label={t('customDisplayName')}
-          disabled={profileDisabled}
-          onChange={(event) => { setDisplayName(event.target.value) }}
-        />
-      </div>
+      {props.variant === 'local'
+        ? null
+        : (
+          <>
+            <div className={styles['field']}>
+              <span className={styles['fieldLabel']}>{t('customRoute')}</span>
+              <input
+                className={styles['input']}
+                type="text"
+                value={route}
+                placeholder="acme-gateway"
+                aria-label={t('customRoute')}
+                disabled={profileDisabled}
+                onChange={(event) => { setRoute(event.target.value) }}
+              />
+            </div>
+            {routeInvalid || routeTaken
+              ? <p className={styles['error']}>{t(routeInvalid ? 'customRouteInvalid' : 'customRouteTaken')}</p>
+              : <p className={styles['advancedHint']}>{t('customRouteHint')}</p>}
+            <div className={styles['field']}>
+              <span className={styles['fieldLabel']}>{t('customDisplayName')}</span>
+              <input
+                className={styles['input']}
+                type="text"
+                value={displayName}
+                placeholder={route.length === 0 ? t('customDisplayName') : route}
+                aria-label={t('customDisplayName')}
+                disabled={profileDisabled}
+                onChange={(event) => { setDisplayName(event.target.value) }}
+              />
+            </div>
+          </>
+        )}
       <div className={styles['field']}>
         <span className={styles['fieldLabel']}>{t('baseUrl')}</span>
         <input
@@ -233,27 +264,33 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
           onChange={(event) => { setBaseURL(event.target.value) }}
         />
       </div>
+      {props.variant === 'local'
+        ? null
+        : (
+          <div className={styles['field']}>
+            <span className={styles['fieldLabel']}>{t('customApi')}</span>
+            <select
+              className={`${styles['input']} ${styles['selectInput']}`}
+              value={protocol}
+              aria-label={t('customApi')}
+              disabled={profileDisabled}
+              onChange={(event) => { setProtocol(event.target.value) }}
+            >
+              {protocols.map(choice => <option key={choice} value={choice}>{choice}</option>)}
+            </select>
+          </div>
+        )}
       <div className={styles['field']}>
-        <span className={styles['fieldLabel']}>{t('customApi')}</span>
-        <select
-          className={`${styles['input']} ${styles['selectInput']}`}
-          value={protocol}
-          aria-label={t('customApi')}
-          disabled={profileDisabled}
-          onChange={(event) => { setProtocol(event.target.value) }}
-        >
-          {protocols.map(choice => <option key={choice} value={choice}>{choice}</option>)}
-        </select>
-      </div>
-      <div className={styles['field']}>
-        <span className={styles['fieldLabel']}>{t('keyInput')}</span>
+        <span className={styles['fieldLabel']}>
+          {t(props.variant === 'local' ? 'localKeyInput' : 'keyInput')}
+        </span>
         <input
           className={styles['input']}
           type="password"
           autoComplete="off"
           value={keyDraft}
-          placeholder={t('keyPlaceholder')}
-          aria-label={t('keyInput')}
+          placeholder={t(props.variant === 'local' ? 'localKeyPlaceholder' : 'keyPlaceholder')}
+          aria-label={t(props.variant === 'local' ? 'localKeyInput' : 'keyInput')}
           disabled={disabled}
           onChange={(event) => { setKeyDraft(event.target.value) }}
         />
@@ -286,8 +323,8 @@ export function CustomProviderCard(props: CustomProviderCardProps): ReactNode {
         t={t}
         busy={busy}
         submitDisabled={disabled || !ready}
-        submitLabel="create"
-        submitBusyLabel="creating"
+        submitLabel={props.variant === 'local' ? 'localCreate' : 'create'}
+        submitBusyLabel={props.variant === 'local' ? 'localCreating' : 'creating'}
         onCancel={() => { props.onClose(committed) }}
         onSubmit={() => { void create() }}
       />

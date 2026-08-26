@@ -32,8 +32,12 @@ async function writeRequiredMacRuntime(appOutDir: string): Promise<void> {
     ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'index.html'],
     ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'default-background.webp'],
     ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'cloud-cat-background.webp'],
+    ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'jiutian-deep-space-compute-observatory.webp'],
+    ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'jiutian-quantum-glass-laboratory.webp'],
+    ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'jiutian-dawn-compute-horizon.webp'],
     ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'beyondata-logo.png'],
     ['pnpm', 'bin', 'pnpm.cjs'],
+    ['@img', 'sharp-darwin-arm64', 'lib', 'sharp-darwin-arm64-test.node'],
   ]
   for (const segments of required) {
     const file = join(modules, ...segments)
@@ -90,6 +94,30 @@ describe('packaged desktop runtime verification', () => {
     }
   })
 
+  it('requires the macOS arm64 Sharp native module in a macOS package', async () => {
+    const appOutDir = await mkdtemp(join(tmpdir(), 'dsh-packaged-runtime-mac-sharp-'))
+    try {
+      await writeRequiredMacRuntime(appOutDir)
+      const sharp = join(
+        appOutDir,
+        'DeepSeek Harness.app',
+        'Contents',
+        'Resources',
+        'host',
+        'node_modules',
+        '@img',
+        'sharp-darwin-arm64',
+        'lib',
+        'sharp-darwin-arm64-test.node',
+      )
+      await rm(sharp)
+      await expect(afterPack(context(appOutDir)))
+        .rejects.toThrow('macOS arm64 Sharp native module is missing from the packaged Host runtime')
+    } finally {
+      await rm(appOutDir, { recursive: true, force: true })
+    }
+  })
+
   it('rejects a packaged shell whose package manager is absent or not pinned', async () => {
     const appOutDir = await mkdtemp(join(tmpdir(), 'dsh-packaged-runtime-pnpm-'))
     try {
@@ -99,6 +127,9 @@ describe('packaged desktop runtime verification', () => {
         ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'index.html'],
         ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'default-background.webp'],
         ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'cloud-cat-background.webp'],
+        ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'jiutian-deep-space-compute-observatory.webp'],
+        ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'jiutian-quantum-glass-laboratory.webp'],
+        ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'jiutian-dawn-compute-horizon.webp'],
         ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'beyondata-logo.png'],
         ['pnpm', 'bin', 'pnpm.cjs'],
       ]
@@ -134,12 +165,15 @@ describe('packaged desktop runtime verification', () => {
         ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'index.html'],
         ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'default-background.webp'],
         ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'cloud-cat-background.webp'],
+        ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'jiutian-deep-space-compute-observatory.webp'],
+        ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'jiutian-quantum-glass-laboratory.webp'],
+        ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'jiutian-dawn-compute-horizon.webp'],
         ['@deepseek-ai', 'dsh-web-frontend', 'dist', 'dsh-desktop', 'beyondata-logo.png'],
         ['pnpm', 'bin', 'pnpm.cjs'],
         ['@koromix', 'koffi-win32-x64', 'win32_x64', 'koffi.node'],
         ['node-addon-require-builtin-win32-x64-msvc', 'prebuilt', 'win32-x64-msvc-napi-v9.node'],
-        ['node-pty', 'prebuilds', 'win32-x64', 'pty.node'],
         ['node-pty', 'prebuilds', 'win32-x64', 'conpty.node'],
+        ['node-pty', 'prebuilds', 'win32-x64', 'conpty_console_list.node'],
         ['@img', 'sharp-win32-x64', 'lib', 'sharp-win32-x64-test.node'],
       ]
       for (const segments of required) {
@@ -150,7 +184,7 @@ describe('packaged desktop runtime verification', () => {
       await writeFile(join(modules, 'pnpm/package.json'), JSON.stringify({ version: '11.7.0' }))
 
       await expect(afterPack(context(appOutDir, 'win32'))).resolves.toBeUndefined()
-      await rm(join(modules, 'node-pty', 'prebuilds', 'win32-x64', 'conpty.node'))
+      await rm(join(modules, 'node-pty', 'prebuilds', 'win32-x64', 'conpty_console_list.node'))
       await expect(afterPack(context(appOutDir, 'win32'))).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       await rm(appOutDir, { recursive: true, force: true })

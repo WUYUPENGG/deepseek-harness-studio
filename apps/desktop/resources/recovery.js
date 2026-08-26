@@ -45,9 +45,11 @@ function render(snapshot) {
   exportButton.disabled = !snapshot.canExportDiagnostics
   retry.disabled = !snapshot.canRetry
   if (snapshot.phase === 'recovering') {
-    summary.textContent = '正在恢复上一次操作前的插件环境，请不要退出应用。'
+    summary.textContent = '正在恢复上一次操作前的插件环境；旧锁文件不兼容时会自动尝试兼容恢复，请不要退出应用。'
   } else if (snapshot.phase === 'recovery-failed') {
-    summary.textContent = '旧环境尚未通过完整验证。你可以重试，或先导出不含本地路径和文件内容的诊断。'
+    summary.textContent = snapshot.recoveryReasonCode === 'package-restore-failed'
+      ? '旧依赖在冻结锁与兼容模式下均未恢复。请先导出诊断，再确认插件归档或网络是否仍可用。'
+      : '旧环境尚未通过完整验证。你可以重试，或先导出不含本地路径和文件内容的诊断。'
   } else {
     summary.textContent = '旧插件环境已经恢复，正在进入普通桌面。'
   }
@@ -57,7 +59,7 @@ retry.addEventListener('click', async () => {
   if (bridge === undefined || current === null) return
   retry.disabled = true
   exportButton.disabled = true
-  notice.textContent = '正在重新恢复并验证旧环境…'
+  notice.textContent = '正在重新恢复并验证旧环境；必要时会自动兼容旧锁文件…'
   try {
     render(await bridge.retry({ operationId: current.operationId }))
     notice.textContent = current?.phase === 'rolled-back' ? '恢复完成。' : '恢复仍未通过，请查看新的失败原因。'

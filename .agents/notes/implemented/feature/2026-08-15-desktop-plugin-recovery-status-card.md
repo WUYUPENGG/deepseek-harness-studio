@@ -28,4 +28,4 @@ Component tests cover readable failure evidence, stable reason code, attempt cou
 
 ## Consequences
 
-Recovery failure is understandable without losing support evidence, and the Web fixture stays honest about its lack of system authority. Production mutation is enabled, but an unresolved recovery failure blocks another operation until retry succeeds.
+Recovery failure is understandable without losing support evidence, and the Web fixture stays honest about its lack of system authority. Snapshot, Profile, package, lock, and Host failures continue to block ordinary startup. The later [runtime-mismatch safe-mode decision](../bug-fix/2026-08-24-plugin-recovery-safe-mode.md) permits only disable or uninstall after the restored Host passes health but exact runtime evidence still differs.

@@ -390,7 +390,7 @@ describe('desktop Host process', () => {
 
     expect(spawn).toHaveBeenCalledWith(
       '/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness',
-      ['--expose-internals', expect.stringContaining('/Resources/host/node_modules/@deepseek-ai/dsh/lib/bin.js'), 'web', '--host', '127.0.0.1', '--port', '0'],
+      ['--expose-internals', expect.stringContaining('/Resources/host/node_modules/@deepseek-ai/dsh/lib/bin.js'), 'web', '--no-open', '--host', '127.0.0.1', '--port', '0'],
       expect.objectContaining({ env: { DSH_DESKTOP: '1', ELECTRON_RUN_AS_NODE: '1' } }),
     )
   })

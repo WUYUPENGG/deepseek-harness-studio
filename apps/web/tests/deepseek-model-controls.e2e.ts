@@ -26,7 +26,7 @@ describe.skipIf(MODE === 'record')('web e2e: DeepSeek model controls use Chinese
 
   beforeAll(async () => {
     // Keep the shipped DeepSeek adapter mounted so this scenario exercises
-    // its real off/high/max metadata. The credential is deliberately masked:
+    // its real off/low/high/max metadata. The credential is deliberately masked:
     // catalog reads and selection are keyless and no model request is issued.
     scaffold = await launchWebScaffold({ deepSeekMissingCredential: true })
     browser = await chromium.launch()
@@ -89,6 +89,7 @@ describe.skipIf(MODE === 'record')('web e2e: DeepSeek model controls use Chinese
     await expect.poll(async () => levels.allTextContents(), { timeout: 10_000 })
       .toEqual([
         '关闭思考不启用深度思考',
+        '低强度思考减少推理消耗，适合简单任务',
         '深度思考启用深度思考，适合大多数开发任务',
         '最大思考使用最高推理强度，适合复杂任务',
       ])

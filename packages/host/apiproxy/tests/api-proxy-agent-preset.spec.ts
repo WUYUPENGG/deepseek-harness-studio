@@ -6,9 +6,11 @@
  */
 
 import { mkdtempSync, realpathSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
+import { strToU8, zipSync } from 'fflate'
 import AgentRegistry, { type AgentFactory } from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import SessionStore, { SessionId, type Session } from '@deepseek-ai/dsh-session'
@@ -616,6 +618,29 @@ describe('opening a preset directory', () => {
     const response = await api.agentPresets.list(request({}))
 
     expect(response.result.ok && response.result.value.hasDocument).toBe(true)
+  })
+})
+
+describe('importing a preset archive', () => {
+  it('compares the source against the running DSH package version', async () => {
+    const { api } = await harness(['standard'])
+    const packageVersion = (createRequire(import.meta.url)('../package.json') as { version: string }).version
+    const data = zipSync({
+      'manifest.json': strToU8(JSON.stringify({
+        format: 'dsh-preset',
+        version: 1,
+        id: 'package-version-fixture',
+        sourceDshVersion: packageVersion,
+      })),
+      'preset/agent.cordis.yml': strToU8('- id: fixture\n  name: fixture.plugin\n'),
+    })
+    const importArchive = api.agentPresets.importArchive
+    if (importArchive === undefined) throw new Error('archive import unavailable')
+
+    const response = await importArchive(data, { install: false }, new AbortController().signal)
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ ok: true, warnings: [] })
   })
 })
 

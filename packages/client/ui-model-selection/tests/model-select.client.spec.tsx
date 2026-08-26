@@ -23,6 +23,7 @@ const t: ComponentProps<typeof ModelSelect>['t'] = (key, params) => {
 const reasoning = {
   efforts: [
     { id: 'off', name: 'Off' },
+    { id: 'low', name: 'Low' },
     { id: 'high', name: 'High' },
     { id: 'max', name: 'Max' },
   ],
@@ -79,6 +80,7 @@ describe('ModelSelect reasoning effort', () => {
     expect(screen.getAllByRole('menuitemradio').map(item => item.textContent))
       .toEqual([
         '关闭思考不启用深度思考',
+        '低强度思考减少推理消耗，适合简单任务',
         '深度思考启用深度思考，适合大多数开发任务',
         '最大思考使用最高推理强度，适合复杂任务',
       ])
@@ -156,6 +158,43 @@ describe('ModelSelect reasoning effort', () => {
     })
     expect(select).toHaveBeenNthCalledWith(1, { provider: 'deepseek-official', model: 'deepseek-v4-pro' })
     expect(select).toHaveBeenNthCalledWith(2, { provider: 'deepseek-official', model: 'deepseek-v4-flash' })
+  })
+
+  it('marks the DeepSeek native vision model as the recommended multimodal route', () => {
+    const vision = {
+      id: 'deepseek-v4-flash-vision-exp',
+      name: 'DeepSeek-V4-Flash-Vision-Exp',
+    }
+    const directory = createSnapshotStore<ModelDirectoryState>(state({
+      current: { provider: 'deepseek-official', model: vision.id },
+      groups: [{
+        id: 'deepseek-official',
+        name: 'DeepSeek',
+        models: [
+          { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash', reasoning },
+          vision,
+        ],
+      }],
+    }))
+    render(<ModelSelect
+      locked={false}
+      available
+      directory={directory}
+      load={vi.fn()}
+      select={vi.fn().mockResolvedValue(true)}
+      t={t}
+    />)
+
+    const trigger = screen.getByRole('button', {
+      name: /DeepSeek-V4-Flash-Vision-Exp · 支持图片/,
+    })
+    expect(trigger.textContent).toBe('DeepSeek-V4-Flash-Vision-Exp')
+    fireEvent.click(trigger)
+    fireEvent.click(screen.getByRole('menuitem', { name: /模型/ }))
+    const option = screen.getByRole('menuitemradio', {
+      name: /DeepSeek-V4-Flash-Vision-Exp.*支持图片/,
+    })
+    expect(option.getAttribute('aria-checked')).toBe('true')
   })
 
   it('offers provider default only when the adapter does not configure a model default', () => {

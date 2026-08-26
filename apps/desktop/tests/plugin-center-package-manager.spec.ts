@@ -5,6 +5,7 @@ import {
   createPackageRemoveInvocation,
   installTrustedPackage,
   removeTrustedPackage,
+  restoreTrustedProfilePackages,
   type PackageManagerInvocation,
   type PackageManagerProcessAdapter,
 } from '../src/plugin-center/package-manager.ts'
@@ -146,5 +147,54 @@ describe('fixed Plugin Center package manager', () => {
       } },
     }, { packageName: target.packageName })
     expect(captured).toEqual([invocation])
+  })
+
+  it('re-materializes an old Profile without rewriting an incompatible frozen lockfile', async () => {
+    const captured: PackageManagerInvocation[] = []
+    const options = {
+      executable: 'C:\\Program Files\\DeepSeek Harness\\DeepSeek Harness.exe',
+      packageManagerEntry: 'C:\\Program Files\\DeepSeek Harness\\resources\\host\\node_modules\\pnpm\\bin\\pnpm.cjs',
+      profileDirectory: 'C:\\Users\\fixture\\.dsh\\profiles\\web',
+      storeDirectory: 'C:\\Users\\fixture\\AppData\\Local\\DeepSeek Harness\\plugin-store',
+      homeDirectory: 'C:\\Users\\fixture',
+      electronRunAsNode: true,
+      platform: 'win32' as const,
+      processAdapter: { run: async (invocation: PackageManagerInvocation) => {
+        captured.push(invocation)
+        return captured.length === 1
+          ? { code: 1, signal: null, stdout: '', stderr: 'frozen lock is incompatible' }
+          : { code: 0, signal: null, stdout: 'restored', stderr: '' }
+      } },
+    }
+
+    await expect(restoreTrustedProfilePackages(options, true)).resolves.toBeUndefined()
+    expect(captured).toHaveLength(2)
+    expect(captured[0]?.args).toContain('--frozen-lockfile')
+    expect(captured[0]?.args).not.toContain('--lockfile=false')
+    expect(captured[1]?.args).toContain('--no-frozen-lockfile')
+    expect(captured[1]?.args).toContain('--lockfile=false')
+    expect(captured[1]).toMatchObject({ cwd: options.profileDirectory, shell: false, windowsHide: true })
+  })
+
+  it('does not repeat the compatibility command when a Profile has no historical lockfile', async () => {
+    const captured: PackageManagerInvocation[] = []
+    const options = {
+      executable: '/runtime/node',
+      packageManagerEntry: '/runtime/pnpm.cjs',
+      profileDirectory: '/profile/web',
+      storeDirectory: '/private/store',
+      homeDirectory: '/home/fixture',
+      electronRunAsNode: false,
+      platform: 'darwin' as const,
+      processAdapter: { run: async (invocation: PackageManagerInvocation) => {
+        captured.push(invocation)
+        return { code: 1, signal: null, stdout: '', stderr: 'dependency unavailable' }
+      } },
+    }
+
+    await expect(restoreTrustedProfilePackages(options, false)).rejects.toThrow('dependency unavailable')
+    expect(captured).toHaveLength(1)
+    expect(captured[0]?.args).toContain('--no-frozen-lockfile')
+    expect(captured[0]?.args).not.toContain('--lockfile=false')
   })
 })

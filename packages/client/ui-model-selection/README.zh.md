@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-模型选择插件（浏览器侧）：**两个入口共用一份会话级目录**，由 `ModelDirectoryResolver`（`ctx.modelDirectories`）持有。对于普通会话，`/model` popupSelect 贡献项（经 `ctx.commandUi` 注册）与 composer 的具名 `conversation.input.model` slot 都通过同一个 `ModelDirectory` 实例，经 `session.models` 加载会话的建议目录，并经 `session.selectModel` 提交。紧凑型 composer 触发器会打开两级模型／推理菜单：一级行保持可见，鼠标悬浮、键盘聚焦或点击后，匹配的选项卡会在右侧展开。两张卡之间的视觉间隙可以安全通过鼠标，短暂的离开宽限会在指针穿越期间保持侧卡稳定；点击与键盘聚焦仍会确定性地打开同一张卡。模型仍按提供方分组，所选具体模型则提供由其适配器持有的推理强度 id、说明和默认值。DeepSeek 的 `off`、`high` 与 `max` 会在「思考模式」下分别显示为「关闭思考」「深度思考」与「最大思考」；其他提供方继续显示其适配器给出的名称。`/model` 应用所选模型的默认推理强度，composer 随后可以选择任一已公布的推理强度。
+模型选择插件（浏览器侧）：**两个入口共用一份会话级目录**，由 `ModelDirectoryResolver`（`ctx.modelDirectories`）持有。对于普通会话，`/model` popupSelect 贡献项（经 `ctx.commandUi` 注册）与 composer 的具名 `conversation.input.model` slot 都通过同一个 `ModelDirectory` 实例，经 `session.models` 加载会话的建议目录，并经 `session.selectModel` 提交。紧凑型 composer 触发器会打开两级模型／推理菜单：一级行保持可见，鼠标悬浮、键盘聚焦或点击后，匹配的选项卡会在右侧展开。两张卡之间的视觉间隙可以安全通过鼠标，短暂的离开宽限会在指针穿越期间保持侧卡稳定；点击与键盘聚焦仍会确定性地打开同一张卡。模型仍按提供方分组，所选具体模型则提供由其适配器持有的推理强度 id、说明和默认值。DeepSeek 的 `off`、`low`、`high` 与 `max` 会在「思考模式」下分别显示为「关闭思考」「低强度思考」「深度思考」与「最大思考」；其他提供方继续显示其适配器给出的名称。`/model` 应用所选模型的默认推理强度，composer 随后可以选择任一已公布的推理强度。
 
 Host 报告的 `ModelSelection` 是唯一的选择事实，其中包含提供方、模型与推理（reasoning）强度；但只有当该提供方／模型对仍在已公布分组中时才会回显。目录行缺席时，可路由的选择保持不变，但触发器会提示 `Select model`；系统不会合成陈旧行，且在用户选择已公布的模型之前不会显示 Effort 行。目录加载与选择共享一个代次计数器，旧响应不会覆盖新结果；连接重置会丢弃所有常驻目录投影，并在显示前重新拉取 Host 恢复的选择。各提供方的元数据获取失败会内联列出，同时可用分组仍可选择；选择失败会保留先前的选择和目录。
 

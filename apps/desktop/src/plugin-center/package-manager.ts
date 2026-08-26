@@ -41,7 +41,7 @@ export interface PackageManagerInvocation {
 }
 
 /** Process result retained only for bounded Desktop diagnostics. */
-export interface PackageManagerProcessResult {
+interface PackageManagerProcessResult {
   readonly code: number | null
   readonly signal: NodeJS.Signals | null
   readonly stdout: string
@@ -68,7 +68,7 @@ export interface TrustedPackageManagerOptions {
 }
 
 /** Failed or timed-out fixed package-manager invocation. */
-export class PackageManagerInvocationError extends Error {
+class PackageManagerInvocationError extends Error {
   override readonly name = 'PackageManagerInvocationError'
 }
 
@@ -156,7 +156,7 @@ export function createPackageRemoveInvocation(
 }
 
 /** Build the fixed old-Profile package restoration invocation used only by F005. */
-export function createPackageRestoreInvocation(
+function createPackageRestoreInvocation(
   options: TrustedPackageManagerOptions,
   frozenLockfile: boolean,
 ): PackageManagerInvocation {
@@ -184,8 +184,29 @@ export function createPackageRestoreInvocation(
   }
 }
 
+/** Build a recovery-only install that preserves an unusable historical lockfile. */
+function createLockfileFreeRestoreInvocation(
+  options: TrustedPackageManagerOptions,
+): PackageManagerInvocation {
+  const invocation = createPackageRestoreInvocation(options, false)
+  return {
+    ...invocation,
+    args: [
+      options.packageManagerEntry,
+      'install',
+      '--no-frozen-lockfile',
+      '--lockfile=false',
+      ...invocation.args.slice(3),
+    ],
+  }
+}
+
+function packageManagerFailure(result: PackageManagerProcessResult): string {
+  return result.stderr.trim() || result.stdout.trim() || `signal ${String(result.signal)}`
+}
+
 /** Native no-shell process adapter with bounded output and joined termination. */
-export const nativePackageManagerProcess: PackageManagerProcessAdapter = {
+const nativePackageManagerProcess: PackageManagerProcessAdapter = {
   run(invocation) {
     return new Promise((resolve, reject) => {
       const child = spawn(invocation.executable, [...invocation.args], {
@@ -262,10 +283,16 @@ export async function restoreTrustedProfilePackages(
   options: TrustedPackageManagerOptions,
   frozenLockfile: boolean,
 ): Promise<void> {
-  const invocation = createPackageRestoreInvocation(options, frozenLockfile)
-  const result = await (options.processAdapter ?? nativePackageManagerProcess).run(invocation)
-  if (result.code !== 0) {
-    const detail = result.stderr.trim() || result.stdout.trim() || `signal ${String(result.signal)}`
-    throw new PackageManagerInvocationError(`package-manager Profile restore failed: ${detail}`)
+  const processAdapter = options.processAdapter ?? nativePackageManagerProcess
+  const primary = await processAdapter.run(createPackageRestoreInvocation(options, frozenLockfile))
+  if (primary.code === 0) return
+  if (!frozenLockfile) {
+    throw new PackageManagerInvocationError(`package-manager Profile restore failed: ${packageManagerFailure(primary)}`)
   }
+  const compatible = await processAdapter.run(createLockfileFreeRestoreInvocation(options))
+  if (compatible.code === 0) return
+  throw new PackageManagerInvocationError(
+    `package-manager Profile restore failed with the frozen lock (${packageManagerFailure(primary)})`
+    + ` and lockfile-free compatibility mode (${packageManagerFailure(compatible)})`,
+  )
 }

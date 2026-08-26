@@ -88,9 +88,11 @@ export function InstalledIcons({ state, onOpen, t }: {
 }
 
 /** Expanded management rows with retained links into the existing Settings owners. */
-export function InstalledPluginsPanel({ state, mutationsEnabled, onRetry, onSettings, onAction, t }: {
+export function InstalledPluginsPanel({ state, mutationsEnabled, safeRecovery, onRetry, onSettings, onAction, t }: {
   readonly state: InstalledViewState
   readonly mutationsEnabled: boolean
+  /** Restrict a healthy recovery-mismatch session to deactivation or removal. */
+  readonly safeRecovery: boolean
   readonly onRetry: () => void
   readonly onSettings: (tabId: 'configurable' | 'all') => void
   readonly onAction: (item: InstalledPluginProjection, action: PluginManagementAction) => void
@@ -148,7 +150,11 @@ export function InstalledPluginsPanel({ state, mutationsEnabled, onRetry, onSett
                 <button
                   key={action}
                   type="button"
-                  disabled={!mutationsEnabled || item.pendingAction !== null}
+                  disabled={!mutationsEnabled || item.pendingAction !== null
+                    || (safeRecovery && action !== 'disable' && action !== 'uninstall')}
+                  title={safeRecovery && action !== 'disable' && action !== 'uninstall'
+                    ? t('safeModeActionUnavailable')
+                    : undefined}
                   data-action={action}
                   onClick={() => { onAction(item, action) }}
                 >

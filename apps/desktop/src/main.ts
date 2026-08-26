@@ -13,20 +13,27 @@ import {
   session,
   shell,
   Tray,
+  WebContentsView,
   type Event,
   type MenuItemConstructorOptions,
 } from 'electron'
 import electronUpdater from 'electron-updater'
-import { initProfile, PROFILE_TEMPLATES } from '@deepseek-ai/dsh-app-boot'
+import {
+  healProfilesModuleFallback, initProfile, PROFILE_TEMPLATES,
+} from '@deepseek-ai/dsh-app-boot'
 import {
   decodeCatalogDetailQuery,
   decodeCatalogListQuery,
+  decodePluginManagementRequest,
   decodePluginDiagnosticExportRequest,
   decodePluginRecoveryRetryRequest,
+  decodePresetRuntimeRequest,
   type CompatibilityFingerprint,
+  type PluginRecoverySnapshot,
 } from '@deepseek-ai/dsh-plugin-center-contracts'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { AppearanceStorage } from './appearance-storage.ts'
+import { reconcileBuiltInApplications } from './built-in-applications.ts'
 import { DESKTOP_CHANNELS, type DesktopAppearanceSettings } from './desktop-bridge-contract.ts'
 import { createHostSupervisor, spawnDshWeb, type HostSupervisor } from './host-supervisor.ts'
 import { assertDesktopRequestOwner } from './plugin-center/bridge-policy.ts'
@@ -39,6 +46,7 @@ import { resolveSupportedPluginPlatform } from './plugin-center/environment.ts'
 import { NpmEcosystemCatalogRepository } from './plugin-center/npm-ecosystem-catalog.ts'
 import { PluginArtifactDownloader } from './plugin-center/artifact-downloader.ts'
 import { reconcileApplicationUpdateCompatibility } from './plugin-center/app-update-compatibility.ts'
+import { migrateLegacyDshmarketRegistration } from './plugin-center/legacy-dshmarket-migration.ts'
 import { PluginRecoveryDiagnosticExporter } from './plugin-center/diagnostic-export.ts'
 import { PluginOperationController } from './plugin-center/operation-controller.ts'
 import {
@@ -57,6 +65,8 @@ import {
 } from './plugin-center/owned-data.ts'
 import { PluginRuntimeVerifier } from './plugin-center/runtime-verifier.ts'
 import {
+  isPluginSafeModeManagementAction,
+  isPluginSafeModeRecovery,
   preparePluginCenterStartup,
   type PluginStartupRecoveryResult,
 } from './plugin-center/startup-recovery.ts'
@@ -66,18 +76,26 @@ import {
 } from './plugin-center/system-components.ts'
 import { createTrustedInstallRunner } from './plugin-center/trusted-install-executor.ts'
 import { createTrustedManagementRunner } from './plugin-center/trusted-management-executor.ts'
+import { desktopRendererUrl, PLUGIN_CENTER_PAGE_ID } from './renderer-navigation.ts'
 import { DesktopUpdateController } from './update-controller.ts'
 import {
   createDesktopLifecycle,
   isInstallerQuitRequest,
   type DesktopLifecycle,
 } from './window-lifecycle.ts'
+import { reloadWithHeldFrame, type HeldReloadFrame } from './window-reload-transition.ts'
+import { PresetSquareClient } from './preset-square/client.ts'
+import { ResourcePresetSquareCatalog } from './preset-square/bundled-catalog.ts'
+import { migrateLegacyBundledContentPreset } from './preset-square/legacy-bundled-preset-migration.ts'
+import {
+  prepareBundledPackageManagerCommand,
+  PresetRuntimeController,
+  withPresetRuntimeEnvironment,
+} from './preset-square/runtime-controller.ts'
 
 const APP_NAME = 'DeepSeek Harness'
 const WINDOW_WIDTH = 1440
 const WINDOW_HEIGHT = 920
-const PRIMARY_PAGE_PARAMETER = 'dsh-primary-page'
-const PLUGIN_CENTER_PAGE_ID = 'plugin-center'
 const DESKTOP_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPOSITORY_ROOT = resolve(DESKTOP_DIR, '../..')
 
@@ -92,7 +110,19 @@ let pluginOperationController: PluginOperationController | undefined
 let pluginRecoveryController: PluginRecoveryController | undefined
 let pluginDiagnosticExporter: PluginRecoveryDiagnosticExporter | undefined
 let pluginOwnedDataRemover: PluginOwnedDataRemover | undefined
+let presetRuntimeController: PresetRuntimeController | undefined
 let pluginRecoveryStartupBlocked = false
+let pluginRecoverySafeMode = false
+
+function applyPluginRecoverySnapshot(snapshot: PluginRecoverySnapshot | null): void {
+  if (snapshot === null || snapshot.phase === 'rolled-back') {
+    pluginRecoveryStartupBlocked = false
+    pluginRecoverySafeMode = false
+    return
+  }
+  pluginRecoveryStartupBlocked = true
+  pluginRecoverySafeMode = isPluginSafeModeRecovery(snapshot)
+}
 
 interface PluginCenterBackend {
   readonly catalog: PluginCatalogRepository
@@ -107,6 +137,7 @@ function hostPaths(): {
   nodeExecutable: string
   cliEntry: string
   cliManifest: string
+  hostManifest: string
   shippedBundleManifests: readonly string[]
   packageManagerEntry: string
   packageManagerManifest: string
@@ -119,9 +150,11 @@ function hostPaths(): {
       nodeExecutable: process.env.DSH_DESKTOP_NODE_EXECUTABLE ?? 'node',
       cliEntry: join(REPOSITORY_ROOT, 'apps/cli/lib/bin.js'),
       cliManifest: join(REPOSITORY_ROOT, 'apps/cli/package.json'),
+      hostManifest: join(DESKTOP_DIR, 'runtime/package.json'),
       shippedBundleManifests: [
         join(REPOSITORY_ROOT, 'packages/bundle/base/package.json'),
         join(REPOSITORY_ROOT, 'packages/bundle/web-app/package.json'),
+        join(REPOSITORY_ROOT, 'packages/examples/ff-llm-wiki-plugin/package.json'),
       ],
       packageManagerEntry: join(packageManager, 'bin/pnpm.cjs'),
       packageManagerManifest: join(packageManager, 'package.json'),
@@ -134,9 +167,11 @@ function hostPaths(): {
     nodeExecutable: process.execPath,
     cliEntry: join(hostModules, '@deepseek-ai/dsh/lib/bin.js'),
     cliManifest: join(hostModules, '@deepseek-ai/dsh/package.json'),
+    hostManifest: join(process.resourcesPath, 'host/package.json'),
     shippedBundleManifests: [
       join(hostModules, '@deepseek-ai/dsh-base/package.json'),
       join(hostModules, '@deepseek-ai/dsh-web-app/package.json'),
+      join(hostModules, '@fufan/dsh-plugin-llm-wiki/package.json'),
     ],
     packageManagerEntry: join(hostModules, 'pnpm/bin/pnpm.cjs'),
     packageManagerManifest: join(hostModules, 'pnpm/package.json'),
@@ -144,6 +179,8 @@ function hostPaths(): {
     electronRunAsNode: true,
   }
 }
+
+const BUILT_IN_APPLICATION_BUNDLES = ['@fufan/dsh-plugin-llm-wiki'] as const
 
 function assertHostArtifacts(paths: ReturnType<typeof hostPaths>): void {
   if (paths.nodeExecutable.includes('/') && !existsSync(paths.nodeExecutable)) {
@@ -155,7 +192,12 @@ function assertHostArtifacts(paths: ReturnType<typeof hostPaths>): void {
   if (!existsSync(paths.packageManagerEntry)) {
     throw new Error(`desktop package-manager entry is missing: ${paths.packageManagerEntry}`)
   }
-  for (const manifest of [paths.cliManifest, paths.packageManagerManifest, ...paths.shippedBundleManifests]) {
+  for (const manifest of [
+    paths.cliManifest,
+    paths.hostManifest,
+    paths.packageManagerManifest,
+    ...paths.shippedBundleManifests,
+  ]) {
     if (!existsSync(manifest)) throw new Error(`desktop Host manifest is missing: ${manifest}`)
   }
 }
@@ -164,18 +206,17 @@ function currentHostOrigin(): string | undefined {
   return host?.current?.origin
 }
 
-function rendererUrl(origin: string, primaryPage?: string): string {
-  const url = new URL(origin)
-  url.searchParams.set('dsh-desktop-platform', process.platform)
-  if (primaryPage !== undefined) url.searchParams.set(PRIMARY_PAGE_PARAMETER, primaryPage)
-  return url.href
-}
-
 function recoveryPageUrl(): string {
   const path = app.isPackaged
     ? join(process.resourcesPath, 'desktop-resources/recovery.html')
     : join(DESKTOP_DIR, 'resources/recovery.html')
   return pathToFileURL(path).href
+}
+
+function bundledPresetRoot(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'desktop-resources/preset-square/presets')
+    : join(DESKTOP_DIR, 'resources/preset-square/presets')
 }
 
 function isRecoveryPageUrl(raw: string): boolean {
@@ -189,13 +230,86 @@ function isRecoveryPageUrl(raw: string): boolean {
 }
 
 async function loadWindowHost(window: BrowserWindow, origin: string, primaryPage?: string): Promise<void> {
-  await window.loadURL(rendererUrl(origin, primaryPage))
+  await window.loadURL(desktopRendererUrl({
+    origin,
+    platform: process.platform,
+    ...(primaryPage === undefined ? {} : { primaryPage }),
+    previousUrl: window.webContents.getURL(),
+  }))
+}
+
+async function holdCurrentWindowFrame(window: BrowserWindow): Promise<HeldReloadFrame | undefined> {
+  if (window.isDestroyed()) return undefined
+  const snapshot = await window.webContents.capturePage()
+  if (snapshot.isEmpty() || window.isDestroyed()) return undefined
+  const { width, height } = window.getContentBounds()
+  const held = new WebContentsView({
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  })
+  held.setBounds({ x: 0, y: 0, width, height })
+  held.setBackgroundColor('#111318')
+  const document = [
+    '<!doctype html><meta charset="utf-8">',
+    '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:">',
+    '<style>html,body,img{width:100%;height:100%;margin:0;overflow:hidden}img{display:block}</style>',
+    `<img alt="" src="${snapshot.toDataURL()}">`,
+  ].join('')
+  try {
+    await held.webContents.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(document)}`)
+    if (window.isDestroyed()) {
+      held.webContents.close()
+      return undefined
+    }
+    window.contentView.addChildView(held)
+  } catch (error) {
+    if (!held.webContents.isDestroyed()) held.webContents.close()
+    throw error
+  }
+  return {
+    release() {
+      if (!window.isDestroyed()) window.contentView.removeChildView(held)
+      if (!held.webContents.isDestroyed()) held.webContents.close()
+    },
+  }
+}
+
+async function reloadWindowHost(window: BrowserWindow, origin: string, primaryPage?: string): Promise<void> {
+  await reloadWithHeldFrame({
+    holdCurrentFrame: async () => await holdCurrentWindowFrame(window),
+    navigate: async () => { await loadWindowHost(window, origin, primaryPage) },
+    waitForPaint: async () => {
+      await Promise.race([
+        window.webContents.executeJavaScript(
+          'new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))',
+        ),
+        new Promise<void>((resolvePaint) => { setTimeout(resolvePaint, 250) }),
+      ])
+    },
+    reportTransitionFailure: (error) => { console.warn('desktop held-frame reload transition failed:', error) },
+  })
 }
 
 function manifestVersion(path: string): string {
   const manifest = JSON.parse(readFileSync(path, 'utf8')) as { version?: unknown }
   if (typeof manifest.version !== 'string') throw new Error(`${path} has no version`)
   return manifest.version
+}
+
+function manifestDependencyNames(path: string): ReadonlySet<string> {
+  const manifest = JSON.parse(readFileSync(path, 'utf8')) as { dependencies?: unknown }
+  if (typeof manifest.dependencies !== 'object' || manifest.dependencies === null
+    || Array.isArray(manifest.dependencies)) {
+    throw new Error(`${path} has no dependency map`)
+  }
+  const dependencies = Object.entries(manifest.dependencies)
+  for (const [name, version] of dependencies) {
+    if (name === '' || typeof version !== 'string') throw new Error(`${path} has an invalid dependency map`)
+  }
+  return new Set(dependencies.map(([name]) => name))
 }
 
 /** Load the app-local tray template, with an empty fallback for incomplete staging. */
@@ -235,7 +349,7 @@ function hardenSession(): void {
 
 async function createMainWindow(): Promise<BrowserWindow> {
   const origin = currentHostOrigin()
-  const recoveryMode = pluginRecoveryStartupBlocked
+  const recoveryMode = pluginRecoveryStartupBlocked && !pluginRecoverySafeMode
   if (!recoveryMode && origin === undefined) throw new Error('desktop Host is not ready')
   const window = new BrowserWindow({
     width: WINDOW_WIDTH,
@@ -292,7 +406,11 @@ async function createMainWindow(): Promise<BrowserWindow> {
     return { action: 'deny' }
   })
   if (recoveryMode) await window.loadURL(recoveryPageUrl())
-  else if (origin !== undefined) await loadWindowHost(window, origin)
+  else if (origin !== undefined) await loadWindowHost(
+    window,
+    origin,
+    pluginRecoverySafeMode ? PLUGIN_CENTER_PAGE_ID : undefined,
+  )
   if (!lifecycle?.isQuitting) window.show()
   return window
 }
@@ -301,13 +419,27 @@ async function createMainWindow(): Promise<BrowserWindow> {
 function registerDesktopBridge(): PluginCenterBackend {
   const userDataDirectory = app.getPath('userData')
   const appearance = new AppearanceStorage(userDataDirectory)
+  const paths = hostPaths()
+  const hostProvidedModules = manifestDependencyNames(paths.hostManifest)
   const catalog = new NpmEcosystemCatalogRepository(
-    new CatalogCache(userDataDirectory),
+    new CatalogCache(userDataDirectory, [...hostProvidedModules]),
     fetch,
     Date.now,
     userDataDirectory,
+    hostProvidedModules,
   )
-  const paths = hostPaths()
+  const presetSquare = new PresetSquareClient(
+    fetch,
+    Date.now,
+    currentHostOrigin,
+    new ResourcePresetSquareCatalog(bundledPresetRoot()),
+  )
+  presetRuntimeController = new PresetRuntimeController({
+    homeDirectory: resolveDshHome(),
+    nodeExecutable: paths.nodeExecutable,
+    packageManagerEntry: paths.packageManagerEntry,
+    electronRunAsNode: paths.electronRunAsNode,
+  })
   const systemComponents = deriveProtectedSystemComponents(paths.shippedBundleManifests)
   const readFingerprint = (
     selection: CatalogPreflightSelection,
@@ -338,6 +470,7 @@ function registerDesktopBridge(): PluginCenterBackend {
   updateController = new DesktopUpdateController(
     autoUpdater,
     app.getVersion(),
+    manifestVersion(paths.cliManifest),
     app.isPackaged,
   )
   updateController.subscribe((state) => {
@@ -406,6 +539,34 @@ function registerDesktopBridge(): PluginCenterBackend {
     assertDesktopSender(event)
     return compatibility.check(value)
   })
+  ipcMain.handle(DESKTOP_CHANNELS.presetSquareList, (event, value: unknown) => {
+    assertDesktopSender(event)
+    return presetSquare.list(value)
+  })
+  ipcMain.handle(DESKTOP_CHANNELS.presetSquareDetail, (event, value: unknown) => {
+    assertDesktopSender(event)
+    return presetSquare.detail(value)
+  })
+  ipcMain.handle(DESKTOP_CHANNELS.presetSquarePreviewInstall, (event, value: unknown) => {
+    assertDesktopSender(event)
+    return presetSquare.previewInstall(value)
+  })
+  ipcMain.handle(DESKTOP_CHANNELS.presetSquareInstall, (event, value: unknown) => {
+    assertDesktopSender(event)
+    return presetSquare.install(value)
+  })
+  ipcMain.handle(DESKTOP_CHANNELS.presetSquareRuntimeCheck, (event, value: unknown) => {
+    assertDesktopSender(event)
+    const request = decodePresetRuntimeRequest(value)
+    if (presetRuntimeController === undefined) throw new Error('Preset runtime controller is unavailable')
+    return presetRuntimeController.check(request.presetId)
+  })
+  ipcMain.handle(DESKTOP_CHANNELS.presetSquareRuntimeInstall, (event, value: unknown) => {
+    assertDesktopSender(event)
+    const request = decodePresetRuntimeRequest(value)
+    if (presetRuntimeController === undefined) throw new Error('Preset runtime controller is unavailable')
+    return presetRuntimeController.install(request.presetId)
+  })
   ipcMain.handle(DESKTOP_CHANNELS.installedPluginsList, async (event) => {
     assertDesktopSender(event)
     const authority = await catalog.installedAuthority()
@@ -435,12 +596,18 @@ function registerDesktopBridge(): PluginCenterBackend {
   })
   ipcMain.handle(DESKTOP_CHANNELS.pluginOperationStart, async (event, value: unknown) => {
     assertDesktopSender(event)
-    if (pluginRecoveryStartupBlocked) throw new Error('plugin recovery must finish before another operation can start')
     const controller = pluginOperationController
     if (controller === undefined) throw new Error('plugin operation controller is unavailable')
-    return typeof value === 'object' && value !== null && 'action' in value
-      ? await controller.manage(value)
-      : await controller.start(value)
+    const management = typeof value === 'object' && value !== null && 'action' in value
+      ? decodePluginManagementRequest(value)
+      : null
+    const safeManagement = pluginRecoverySafeMode
+      && management !== null
+      && isPluginSafeModeManagementAction(management.action)
+    if (pluginRecoveryStartupBlocked && !safeManagement) {
+      throw new Error('plugin recovery safe mode allows only disable or uninstall')
+    }
+    return management === null ? await controller.start(value) : await controller.manage(management)
   })
   ipcMain.handle(DESKTOP_CHANNELS.pluginOwnedDataGetOffer, async (event) => {
     assertDesktopSender(event)
@@ -470,13 +637,16 @@ function registerDesktopBridge(): PluginCenterBackend {
     const recovery = pluginRecoveryController
     if (recovery === undefined) throw new Error('plugin recovery controller is unavailable')
     const result = await recovery.retry(request.operationId)
-    if (result?.phase === 'rolled-back') {
-      pluginRecoveryStartupBlocked = false
+    applyPluginRecoverySnapshot(result)
+    if (result?.phase === 'rolled-back' || pluginRecoverySafeMode) {
       const window = mainWindow
       const origin = currentHostOrigin()
       if (window !== undefined && !window.isDestroyed() && origin !== undefined) {
         await loadWindowHost(window, origin, PLUGIN_CENTER_PAGE_ID)
       }
+    } else if (result?.phase === 'recovery-failed') {
+      const window = mainWindow
+      if (window !== undefined && !window.isDestroyed()) await window.loadURL(recoveryPageUrl())
     }
     return result
   })
@@ -541,15 +711,24 @@ async function initializePluginOperations(backend: PluginCenterBackend): Promise
     reloadHost: origin => currentLifecycle.reloadHost(origin, PLUGIN_CENTER_PAGE_ID),
   })
   pluginRecoveryController = recovery
-  pluginDiagnosticExporter = new PluginRecoveryDiagnosticExporter(journal)
+  pluginDiagnosticExporter = new PluginRecoveryDiagnosticExporter(journal, {
+    desktopVersion: app.getVersion(),
+    platform: resolveSupportedPluginPlatform(process.platform, process.arch),
+  })
   pluginOwnedDataRemover = new PluginOwnedDataRemover(
     join(app.getPath('userData'), 'plugin-data'),
     journal,
     ownedDataAuthorityStore,
   )
   recovery.subscribe((snapshot) => {
+    applyPluginRecoverySnapshot(snapshot)
     for (const window of BrowserWindow.getAllWindows()) {
-      if (!window.isDestroyed()) window.webContents.send(DESKTOP_CHANNELS.pluginRecoveryState, snapshot)
+      if (window.isDestroyed()) continue
+      window.webContents.send(DESKTOP_CHANNELS.pluginRecoveryState, snapshot)
+      if (snapshot.phase === 'recovery-failed' && !pluginRecoverySafeMode
+        && !isRecoveryPageUrl(window.webContents.getURL())) {
+        void window.loadURL(recoveryPageUrl())
+      }
     }
   })
   const sharedExecutorOptions = {
@@ -583,7 +762,23 @@ async function initializePluginOperations(backend: PluginCenterBackend): Promise
     startNormalHost: async () => {
       const webProfileBundles = PROFILE_TEMPLATES['web']
       if (webProfileBundles === undefined) throw new Error('web Profile template is unavailable')
-      initProfile(profileDirectory, webProfileBundles)
+      initProfile(profileDirectory, [...webProfileBundles, ...BUILT_IN_APPLICATION_BUNDLES])
+      reconcileBuiltInApplications(profileDirectory, BUILT_IN_APPLICATION_BUNDLES)
+      for (const manifestPath of backend.paths.shippedBundleManifests) {
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { readonly name?: string }
+        if (manifest.name !== undefined && BUILT_IN_APPLICATION_BUNDLES.includes(
+          manifest.name as typeof BUILT_IN_APPLICATION_BUNDLES[number],
+        )) {
+          healProfilesModuleFallback(manifestPath, dshHome)
+        }
+      }
+      const dshmarketMigration = await migrateLegacyDshmarketRegistration({
+        profileDirectory,
+        installAnchor: backend.paths.cliManifest,
+      })
+      if (dshmarketMigration.removedEntries > 0) {
+        console.warn(`removed ${dshmarketMigration.removedEntries} legacy dshmarket registration(s) before Host start`)
+      }
       const authority = await backend.catalog.installedAuthority()
       const selection = {
         candidate: null,
@@ -599,12 +794,23 @@ async function initializePluginOperations(backend: PluginCenterBackend): Promise
       for (const item of compatibility.deactivated) {
         console.warn(`disabled incompatible plugin before Host start: ${item.pluginId}@${item.version}`)
       }
+      if (await migrateLegacyBundledContentPreset({
+        homeDirectory: dshHome,
+        bundledPresetRoot: bundledPresetRoot(),
+      })) {
+        console.warn('migrated legacy bundled content Preset before Host start')
+      }
       return await currentHost.start()
     },
+    startSafeHost: async () => currentHost.current ?? await currentHost.start(),
   })
   if (startup.recovery?.operationId !== UNREADABLE_PLUGIN_JOURNAL_OPERATION_ID) {
     await controller.initialize()
     controller.subscribe((operation) => {
+      if (pluginRecoverySafeMode && operation.phase === 'committed') {
+        pluginRecoveryStartupBlocked = false
+        pluginRecoverySafeMode = false
+      }
       for (const window of BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed()) window.webContents.send(DESKTOP_CHANNELS.pluginOperationState, operation)
       }
@@ -649,13 +855,19 @@ async function boot(): Promise<void> {
   const pluginCenter = registerDesktopBridge()
   const paths = pluginCenter.paths
   assertHostArtifacts(paths)
+  await prepareBundledPackageManagerCommand({
+    homeDirectory: resolveDshHome(),
+    nodeExecutable: paths.nodeExecutable,
+    packageManagerEntry: paths.packageManagerEntry,
+    electronRunAsNode: paths.electronRunAsNode,
+  })
   host = createHostSupervisor({
     spawnHost: () => spawnDshWeb({
       ...paths,
-      env: {
+      env: withPresetRuntimeEnvironment({
         ...process.env,
         DSH_DESKTOP: '1',
-      },
+      }, resolveDshHome()),
     }),
     log: chunk => process.stderr.write(chunk),
     onUnexpectedExit: ({ code, signal }) => {
@@ -668,14 +880,15 @@ async function boot(): Promise<void> {
     getWindow: () => mainWindow,
     createWindow: createMainWindow,
     loadHost: async (window, origin, primaryPage) => {
-      await loadWindowHost(window as BrowserWindow, origin, primaryPage)
+      await reloadWindowHost(window as BrowserWindow, origin, primaryPage)
     },
     disposeHost: async () => { await host?.shutdown() },
     quit: releaseAppQuit,
     reportError: (error) => { console.error('desktop shutdown failed:', error) },
   })
   const pluginStartup = await initializePluginOperations(pluginCenter)
-  pluginRecoveryStartupBlocked = pluginStartup.mode === 'recovery-failed'
+  pluginRecoveryStartupBlocked = pluginStartup.mode !== 'normal'
+  pluginRecoverySafeMode = pluginStartup.mode === 'safe'
   createTray()
   await lifecycle.showWindow()
   if (app.isPackaged && !pluginRecoveryStartupBlocked) {

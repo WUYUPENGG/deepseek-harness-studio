@@ -61,7 +61,10 @@ import {
   credentialsDescribeValueSchema, credentialsSetValueSchema, credentialsUnsetValueSchema,
 } from '../api/credentials.schema.ts'
 import { llmDiscoverModelsValueSchema, llmModelsValueSchema, llmProvidersValueSchema } from '../api/llm.schema.ts'
-import { visionEnableValueSchema, visionStatusValueSchema, visionTestValueSchema } from '../api/vision.schema.ts'
+import {
+  visionActivateValueSchema, visionEnableValueSchema, visionRouteValueSchema,
+  visionStatusValueSchema, visionTestValueSchema,
+} from '../api/vision.schema.ts'
 import {
   subagentHistoryValueSchema,
   subagentInterruptValueSchema,
@@ -164,6 +167,8 @@ export interface IApiClient {
   }
   vision: {
     status(payload: RequestPayload<'vision.status'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'vision.status'>>>
+    route(payload: RequestPayload<'vision.route'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'vision.route'>>>
+    activate(payload: RequestPayload<'vision.activate'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'vision.activate'>>>
     test(payload: RequestPayload<'vision.test'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'vision.test'>>>
     enable(payload: RequestPayload<'vision.enable'>, signal?: AbortSignal): Promise<RpcResponse<ResponseValue<'vision.enable'>>>
   }
@@ -229,6 +234,8 @@ const UNARY_VALUE_SCHEMAS: { [K in keyof RpcMethodMap]: z.ZodType<Wire<ResponseV
   'llm.models': llmModelsValueSchema,
   'llm.discoverModels': llmDiscoverModelsValueSchema,
   'vision.status': visionStatusValueSchema,
+  'vision.route': visionRouteValueSchema,
+  'vision.activate': visionActivateValueSchema,
   'vision.test': visionTestValueSchema,
   'vision.enable': visionEnableValueSchema,
 }
@@ -511,6 +518,8 @@ export abstract class AbstractApiClient implements IApiClient {
 
   readonly vision: IApiClient['vision'] = {
     status: (payload, signal) => this.callUnary('vision.status', payload, signal),
+    route: (payload, signal) => this.callUnary('vision.route', payload, signal),
+    activate: (payload, signal) => this.callUnary('vision.activate', payload, signal),
     test: (payload, signal) => this.callUnary('vision.test', payload, signal, 'caller-signal-only'),
     enable: (payload, signal) => this.callUnary('vision.enable', payload, signal, 'caller-signal-only'),
   }

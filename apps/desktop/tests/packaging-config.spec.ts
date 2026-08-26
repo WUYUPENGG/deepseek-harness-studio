@@ -23,6 +23,7 @@ interface DesktopPackage {
     readonly nsis: {
       readonly oneClick: boolean
       readonly perMachine: boolean
+      readonly allowToChangeInstallationDirectory: boolean
       readonly include: string
       readonly createDesktopShortcut: string
       readonly createStartMenuShortcut: boolean
@@ -103,7 +104,10 @@ describe('desktop packaging configuration', () => {
   })
 
   it('builds and stages the complete workspace before local packaging', () => {
+    expect(desktopPackage.scripts['build:applications'])
+      .toBe('pnpm --filter @fufan/dsh-plugin-llm-wiki run build:application')
     for (const name of ['package', 'dist']) {
+      expect(desktopPackage.scripts[name]).toContain('pnpm run build:applications')
       expect(desktopPackage.scripts[name]).toContain('pnpm --workspace-root run build')
       expect(desktopPackage.scripts[name]).toContain('scripts/stage-runtime.ts')
     }
@@ -125,12 +129,14 @@ describe('desktop packaging configuration', () => {
     const command = desktopPackage.scripts['dist:mac']
 
     expect(command).toBe('node --import tsx scripts/release-mac.ts')
+    expect(macReleaseScript).toContain("'@fufan/dsh-plugin-llm-wiki', 'run', 'build:application'")
     expect(macReleaseScript).toContain("'--mac', 'dmg', 'zip'")
     expect(desktopPackage.build.mac.hardenedRuntime).toBe(true)
     expect(desktopPackage.build.mac.notarize).toBe(true)
   })
 
   it('builds a per-user Windows x64 NSIS installer from a Windows-targeted runtime', () => {
+    expect(desktopPackage.scripts['dist:win']).toContain('pnpm run build:applications')
     expect(desktopPackage.scripts['dist:win']).toContain('DSH_DESKTOP_TARGET_PLATFORM=win32')
     expect(desktopPackage.scripts['dist:win']).toContain('DSH_DESKTOP_TARGET_ARCH=x64')
     expect(desktopPackage.scripts['dist:win']).toContain('scripts/release-win.ts')
@@ -140,20 +146,56 @@ describe('desktop packaging configuration', () => {
       .toBe('DeepSeek-Harness-Desktop-Windows-x64-${version}-Setup.${ext}')
     expect(desktopPackage.build.toolsets.nsis).toBe('1.2.1')
     expect(desktopPackage.build.nsis).toMatchObject({
-      oneClick: true,
+      oneClick: false,
       perMachine: false,
+      allowToChangeInstallationDirectory: true,
       include: 'build/installer.nsh',
       createDesktopShortcut: 'always',
       createStartMenuShortcut: true,
       shortcutName: 'DeepSeek Harness',
     })
     expect(windowsInstallerInclude).toContain('--dsh-installer-quit')
+    expect(windowsInstallerInclude).not.toContain('!macro customInit')
     expect(windowsInstallerInclude).toContain('!macro customCheckAppRunning')
+    expect(windowsInstallerInclude).toContain('!ifdef BUILD_UNINSTALLER')
+    expect(windowsInstallerInclude).toContain(
+      'ReadRegStr $3 HKCU "${INSTALL_REGISTRY_KEY}" "InstallLocation"',
+    )
+    expect(windowsInstallerInclude).toContain(
+      'ReadRegStr $3 HKLM "${INSTALL_REGISTRY_KEY}" "InstallLocation"',
+    )
+    expect(windowsInstallerInclude).toContain('StrCpy $3 "$EXEDIR"')
+    expect(windowsInstallerInclude).toContain('StrCpy $3 "$INSTDIR"')
+    expect(windowsInstallerInclude).toContain('ExecWait')
     expect(windowsInstallerInclude).toContain('taskkill.exe')
     expect(windowsInstallerInclude).toContain('/T /F /IM "${APP_EXECUTABLE_FILENAME}"')
+    expect(windowsInstallerInclude).toContain('Get-CimInstance -ClassName Win32_Process')
+    expect(windowsInstallerInclude).toContain("ExecutablePath.StartsWith(''$3''")
+    expect(windowsInstallerInclude).toContain('Stop-Process -Id $$_.ProcessId -Force')
+    const fileCheckStart = windowsInstallerInclude.indexOf('${If} ${FileExists}')
+    const fileCheckEnd = windowsInstallerInclude.indexOf('${EndIf}', fileCheckStart)
+    const forcedCleanup = windowsInstallerInclude.indexOf('nsExec::ExecToLog', fileCheckStart)
+    expect(forcedCleanup).toBeGreaterThan(fileCheckEnd)
     expect(windowsInstallerInclude).toContain('Pop $0')
-    expect(windowsInstallerInclude).toContain('Sleep 7000')
+    expect(windowsInstallerInclude).toContain('Sleep 3000')
     expect(windowsInstallerInclude).toContain('$1 == "0.1.0-rc.5"')
+    expect(windowsInstallerInclude).toContain('$1 == "0.1.0-rc.6"')
+    expect(windowsInstallerInclude).toContain('$1 == "0.1.0-rc.7"')
+    expect(windowsInstallerInclude).toContain('$1 == "0.1.0-rc.8"')
+    expect(windowsInstallerInclude).toContain('$1 == "0.1.0-rc.9"')
+    expect(windowsInstallerInclude).toContain(
+      'ReadRegStr $2 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" "InstallLocation"',
+    )
+    expect(windowsInstallerInclude).toContain('StrLen $5 "\\${APP_FILENAME}"')
+    expect(windowsInstallerInclude).toContain('StrCpy $6 "$2" $5 -$5')
+    expect(windowsInstallerInclude).toContain('${If} $6 == "\\${APP_FILENAME}"')
+    expect(windowsInstallerInclude).toContain(
+      '${IfNot} ${FileExists} "$2\\${APP_EXECUTABLE_FILENAME}"',
+    )
+    expect(windowsInstallerInclude).toContain(
+      '${IfNot} ${FileExists} "$2\\${UNINSTALL_FILENAME}"',
+    )
+    expect(windowsInstallerInclude).toContain('RMDir /r "$2"')
     expect(windowsInstallerInclude).toContain(
       'DeleteRegValue SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" "UninstallString"',
     )
@@ -161,6 +203,7 @@ describe('desktop packaging configuration', () => {
       'DeleteRegValue SHELL_CONTEXT "${UNINSTALL_REGISTRY_KEY}" "QuietUninstallString"',
     )
     expect(windowsInstallerInclude).toContain('SetOverwrite on')
+    expect(windowsInstallerInclude).toContain('SetErrorLevel 2')
     expect(windowsInstallerInclude).not.toContain('DeleteRegKey SHELL_CONTEXT')
   })
 

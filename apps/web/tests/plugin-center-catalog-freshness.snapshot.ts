@@ -101,6 +101,19 @@ interface PluginOperation {
   failureCode: 'internal' | null
 }
 
+interface RecoverySnapshot {
+  schemaVersion: 1
+  operationId: string
+  phase: 'recovery-failed' | 'rolled-back'
+  recoveryPhase: null
+  operationFailureCode: 'package-mutation-failed'
+  recoveryReasonCode: 'runtime-verification-failed' | null
+  attempt: number
+  updatedAt: string
+  canRetry: boolean
+  canExportDiagnostics: boolean
+}
+
 const EXTRA_PLUGINS: readonly AssembledBootPlugin[] = [
   {
     id: '@deepseek-ai/dsh-client-ui-settings-general',
@@ -192,6 +205,10 @@ let compatibilityAllowed: boolean
 let mutationsEnabled: boolean
 let currentOperation: PluginOperation | null
 let operationListeners: Set<(operation: PluginOperation) => void>
+let installedVersion: string | null
+let detailFailuresRemaining: number
+let currentRecovery: RecoverySnapshot | null
+let recoveryListeners: Set<(snapshot: RecoverySnapshot) => void>
 
 function operation(phase: OperationPhase, idempotencyKey = 'install:fixture.workspace-tools:web-replay'): PluginOperation {
   return {
@@ -296,7 +313,7 @@ function compatibility() {
 }
 
 function installedResult() {
-  const installed = currentOperation?.phase === 'committed'
+  const installed = currentOperation?.phase === 'committed' || installedVersion !== null
   return {
     profileName: 'web',
     profileRevision: installed ? 8 : 7,
@@ -304,7 +321,7 @@ function installedResult() {
     items: installed ? [{
       pluginId: PLUGIN.pluginId,
       packageName: '@fixture/workspace-tools',
-      version: PLUGIN.version,
+      version: installedVersion ?? PLUGIN.version,
       displayName: PLUGIN.displayName,
       icon: null,
       brandColor: PLUGIN.brandColor,
@@ -342,6 +359,10 @@ installAssembledBootEnv({
     compatibilityAllowed = true
     mutationsEnabled = false
     currentOperation = null
+    installedVersion = null
+    detailFailuresRemaining = 0
+    currentRecovery = null
+    recoveryListeners = new Set()
     operationListeners = new Set()
     Object.defineProperty(window, 'dshDesktop', {
       configurable: true,
@@ -358,7 +379,13 @@ installAssembledBootEnv({
             }
             return result(query)
           },
-          detail: async () => detail(),
+          detail: async () => {
+            if (detailFailuresRemaining > 0) {
+              detailFailuresRemaining -= 1
+              throw new Error('fixture registry rate limit')
+            }
+            return detail()
+          },
           checkCompatibility: async () => compatibility(),
         },
         installedPlugins: {
@@ -382,6 +409,21 @@ installAssembledBootEnv({
           getOffer: async () => null,
           remove: async () => { throw new Error('owned-data removal is not used by this replay') },
           retain: async () => { throw new Error('owned-data retention is not used by this replay') },
+        },
+        pluginRecovery: {
+          getState: async () => currentRecovery,
+          retry: async () => currentRecovery,
+          exportDiagnostics: async () => ({
+            operationId: currentRecovery?.operationId ?? 'none',
+            status: 'cancelled',
+            filename: null,
+            sha256: null,
+            bytes: null,
+          }),
+          onState: (listener: (snapshot: RecoverySnapshot) => void) => {
+            recoveryListeners.add(listener)
+            return () => { recoveryListeners.delete(listener) }
+          },
         },
       },
     })
@@ -455,6 +497,45 @@ it('plugin center assembled detail renders ordered preflight denial without expo
   expect(screen.getByRole('button', { name: 'Cannot install' }).hasAttribute('disabled')).toBe(true)
 })
 
+it('plugin center assembled runtime mismatch opens the installed safe-mode manager', async () => {
+  mutationsEnabled = true
+  installedVersion = PLUGIN.version
+  currentRecovery = {
+    schemaVersion: 1,
+    operationId: 'recovery-safe-mode',
+    phase: 'recovery-failed',
+    recoveryPhase: null,
+    operationFailureCode: 'package-mutation-failed',
+    recoveryReasonCode: 'runtime-verification-failed',
+    attempt: 14,
+    updatedAt: '2026-08-24T10:26:12.578Z',
+    canRetry: true,
+    canExportDiagnostics: true,
+  }
+  mountAssembledApp(EXTRA_PLUGINS)
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Plugin Center' }, { timeout: 10_000 }))
+  expect(await screen.findByText('Plugin safe mode')).toBeTruthy()
+  expect(screen.getByText('Recovery attempt 14')).toBeTruthy()
+  const installedRow = document.querySelector('[data-installed-plugin="fixture.workspace-tools"]')
+  expect(installedRow).not.toBeNull()
+  expect(installedRow?.querySelector<HTMLButtonElement>('[data-action="disable"]')?.disabled).toBe(false)
+  expect(installedRow?.querySelector<HTMLButtonElement>('[data-action="uninstall"]')?.disabled).toBe(false)
+})
+
+it('plugin center assembled detail retries a temporary registry failure in place', async () => {
+  detailFailuresRemaining = 1
+  mountAssembledApp(EXTRA_PLUGINS)
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Plugin Center' }, { timeout: 10_000 }))
+  fireEvent.click((await screen.findAllByRole('button', { name: 'View details：Workspace tools' }))[0]!)
+  expect(await screen.findByText(/npm service may be rate-limited/)).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Retry details' }))
+
+  expect(await screen.findByText('Complete built-bundle fixture detail.')).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Install' }).hasAttribute('disabled')).toBe(true)
+})
+
 it('desktop plugin install activation streams progress, commits after runtime proof, and rehydrates', async () => {
   mutationsEnabled = true
   mountAssembledApp(EXTRA_PLUGINS)
@@ -488,4 +569,19 @@ it('desktop plugin install activation streams progress, commits after runtime pr
   fireEvent.click(await screen.findByRole('button', { name: 'Plugin Center' }))
   fireEvent.click((await screen.findAllByRole('button', { name: 'View details：Workspace tools' }))[0]!)
   expect((await screen.findByRole('button', { name: 'Installed' })).hasAttribute('disabled')).toBe(true)
+})
+
+it('assembled discovery keeps compatibility visible when another version is already installed', async () => {
+  installedVersion = '0.9.0'
+  mountAssembledApp(EXTRA_PLUGINS)
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Plugin Discovery' }, { timeout: 10_000 }))
+  expect((await screen.findAllByRole('button', { name: 'Manage' })).length).toBeGreaterThan(0)
+  const opener = (await screen.findAllByRole('heading', { name: 'Workspace tools' }))[0]?.closest('button')
+  if (opener === null || opener === undefined) throw new Error('Discovery detail opener is missing')
+  fireEvent.click(opener)
+
+  expect(await screen.findByText('Installation is compatible now')).toBeTruthy()
+  expect(screen.queryByText('This version is already installed and enabled. No reinstall is needed.')).toBeNull()
+  expect((await screen.findAllByRole('button', { name: 'Manage' })).length).toBeGreaterThan(0)
 })

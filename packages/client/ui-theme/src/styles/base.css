@@ -27,6 +27,10 @@ html[data-dsh-desktop-platform='linux'] {
   --dsh-desktop-titlebar-inset: 44px;
 }
 
+html[data-dsh-desktop-platform='win32'] {
+  --dsh-windows-caption-controls-width: 138px;
+}
+
 html[data-dsh-desktop-platform='darwin'],
 html[data-dsh-desktop-platform='darwin'] body,
 html[data-dsh-desktop-platform='darwin'] #root,

@@ -74,10 +74,11 @@ export class FakeApiClient implements IApiClient {
     version: string
     cwd: string
     attachedSessions: number
+    home: string
     canOpenPath: boolean
   }>> =
     () => Promise.resolve(ok({
-      version: '0-fake', cwd: '/f', attachedSessions: 0, canOpenPath: true,
+      version: '0-fake', cwd: '/f', attachedSessions: 0, home: '/h', canOpenPath: true,
     }))
   onPickDirectory: (payload: unknown) => Promise<RpcResponse<{ path: string | null }>> =
     () => Promise.resolve(ok({ path: null }))
@@ -232,6 +233,12 @@ export class FakeApiClient implements IApiClient {
         { id: 'bailian', name: '阿里云百炼', configured: false, defaultModel: 'qwen3.8-max', apiKeyUrl: 'https://help.aliyun.com/zh/model-studio/get-api-key', modelEditable: false },
         { id: 'openrouter', name: 'OpenRouter', configured: false, defaultModel: 'openai/gpt-4.1-mini', apiKeyUrl: 'https://openrouter.ai/settings/keys', modelEditable: true },
       ],
+    }))),
+    route: payload => this.record('vision.route', payload, Promise.resolve(ok({
+      mode: 'off', modelProvider: payload.modelProvider, model: payload.model,
+    }))),
+    activate: payload => this.record('vision.activate', payload, Promise.resolve(ok({
+      mode: 'native', modelProvider: payload.modelProvider, model: payload.model,
     }))),
     test: payload => this.record('vision.test', payload, Promise.resolve(ok({ provider: 'bailian', model: 'qwen3.8-max', description: 'fixture image' }))),
     enable: payload => this.record('vision.enable', payload, Promise.resolve(ok({ provider: 'bailian', model: 'qwen3.8-max', description: 'fixture image' }))),

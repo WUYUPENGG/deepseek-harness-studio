@@ -30,8 +30,10 @@ const EMPTY_EXPECTED = join(SNAPSHOT_DIR, 'empty.expected.md')
 const CONFIGURED_EXPECTED = join(SNAPSHOT_DIR, 'configured.expected.md')
 const DECLARED_EXPECTED = join(SNAPSHOT_DIR, 'declared.expected.md')
 const DECLARED_EDIT_EXPECTED = join(SNAPSHOT_DIR, 'declared-edit.expected.md')
+const MODEL_PICKER_EXPECTED = join(SNAPSHOT_DIR, 'model-picker.expected.md')
 const NATIVE_DELETE_EXPECTED = join(SNAPSHOT_DIR, 'native-delete.expected.md')
 const DELETE_EXPECTED = join(SNAPSHOT_DIR, 'delete.expected.md')
+const LOCAL_EXPECTED = join(SNAPSHOT_DIR, 'local.expected.md')
 const MODE = webSnapshotMode()
 
 describe('web e2e: Models settings page configures a dormant provider', () => {
@@ -61,7 +63,7 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
     const dialog = page.getByRole('dialog', { name: '设置' })
     await dialog.waitFor({ timeout: 10_000 })
     await dialog.getByRole('button', { name: '模型' }).click()
-    await dialog.getByText('填入各提供方的 API 密钥即可使用其模型。').waitFor({ timeout: 10_000 })
+    await dialog.getByText('配置云端凭据，或连接本机已经启动的模型服务。').waitFor({ timeout: 10_000 })
     // The dormant pi-ai adapter contributes its whole installed catalog; no
     // provider is configured yet, so the page is one add button.
     const add = dialog.getByRole('button', { name: '添加提供方' })
@@ -178,6 +180,42 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
     expect(tripwire.pageErrors).toEqual([])
   }, 60_000)
 
+  it('selects and clears the discovered model catalog in one action', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-models-picker'))
+    const settingsDialog = page.getByRole('dialog', { name: '设置' })
+    await settingsDialog.getByRole('button', { name: '编辑 minimax-cn' }).click()
+    await settingsDialog.getByText('自定义设置').click()
+    await settingsDialog.getByRole('button', { name: '获取可用模型' }).click()
+
+    const picker = page.getByRole('dialog', { name: '选择要添加的模型' })
+    await picker.waitFor({ timeout: 10_000 })
+    const boxes = picker.getByRole('checkbox')
+    const count = await boxes.count()
+    expect(count).toBeGreaterThan(0)
+    expect(await boxes.evaluateAll(nodes => nodes.map(node => (node as HTMLInputElement).checked))).toEqual(
+      Array.from({ length: count }, () => true),
+    )
+
+    await picker.getByRole('button', { name: '取消全选' }).click()
+    expect(await boxes.evaluateAll(nodes => nodes.map(node => (node as HTMLInputElement).checked))).toEqual(
+      Array.from({ length: count }, () => false),
+    )
+    await picker.getByRole('button', { name: '全选' }).waitFor()
+    const snapshot = await captureStableAria(
+      page,
+      '[role="dialog"][aria-label="选择要添加的模型"]',
+      scaffold.workspaceCwd,
+    )
+    await compareOrRefreshGolden(MODEL_PICKER_EXPECTED, snapshot, MODE)
+
+    await picker.getByRole('button', { name: '全选' }).click()
+    expect(await boxes.evaluateAll(nodes => nodes.map(node => (node as HTMLInputElement).checked))).toEqual(
+      Array.from({ length: count }, () => true),
+    )
+    await picker.getByRole('button', { name: '取消', exact: true }).click()
+    await settingsDialog.getByRole('button', { name: '取消', exact: true }).click()
+  }, 60_000)
+
   it('declares a route the adapter does not ship', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-models-declare'))
     const dialog = page.getByRole('dialog', { name: '设置' })
@@ -277,10 +315,38 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
     expect(tripwire.pageErrors).toEqual([])
   }, 60_000)
 
+  it('creates a keyless Ollama route with its explicit unauthenticated posture', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-models-local'))
+    await page.getByRole('button', { name: '设置', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: '设置' })
+    await dialog.waitFor({ timeout: 10_000 })
+    await dialog.getByRole('button', { name: '模型' }).click()
+    await dialog.getByRole('button', { name: '添加本地模型', exact: true }).click()
+    await dialog.getByRole('button', { name: '添加模型', exact: true }).click()
+    await dialog.getByLabel('模型 ID 1').fill('qwen3')
+    await dialog.getByRole('button', { name: '添加本地模型', exact: true }).click()
+    await expect.poll(
+      async () => dialog.getByRole('radiogroup', { name: '本地推理框架' }).count(),
+      { timeout: 10_000 },
+    ).toBe(0)
+
+    await expect.poll(
+      async () => readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8'),
+      { timeout: 10_000 },
+    ).toContain('ollama:')
+    const document = await readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8')
+    expect(document).toContain('allowUnauthenticated: true')
+    expect(document).not.toContain('OLLAMA_API_KEY')
+    const snapshot = await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd)
+    await compareOrRefreshGolden(LOCAL_EXPECTED, snapshot, MODE)
+    expect(tripwire.pageErrors).toEqual([])
+  }, 60_000)
+
   it.skipIf(MODE === 'record')('keeps the fixture inventory closed', async () => {
     await assertFixtureInventory(SNAPSHOT_DIR, [
       'configured.expected.md', 'declared-edit.expected.md', 'declared.expected.md',
-      'delete.expected.md', 'empty.expected.md', 'native-delete.expected.md',
+      'delete.expected.md', 'empty.expected.md', 'local.expected.md', 'model-picker.expected.md',
+      'native-delete.expected.md',
     ])
   })
 })

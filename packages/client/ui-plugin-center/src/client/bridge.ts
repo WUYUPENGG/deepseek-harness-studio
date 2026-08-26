@@ -21,6 +21,16 @@ import type {
   PluginDiagnosticExportResult,
   PluginRecoveryRetryRequest,
   PluginRecoverySnapshot,
+  PresetInstallPreviewRequest,
+  PresetInstallPreviewResult,
+  PresetInstallRequest,
+  PresetInstallResult,
+  PresetRuntimeRequest,
+  PresetRuntimeSnapshot,
+  PresetSquareDetailQuery,
+  PresetSquareDetailResult,
+  PresetSquareListQuery,
+  PresetSquareListResult,
 } from '@deepseek-ai/dsh-plugin-center-contracts'
 import { developmentCatalogBridge } from './development-bridge.ts'
 
@@ -52,6 +62,16 @@ export interface DesktopCatalogBridge {
     retry(request: PluginRecoveryRetryRequest): Promise<PluginRecoverySnapshot | null>
     exportDiagnostics(request: PluginDiagnosticExportRequest): Promise<PluginDiagnosticExportResult>
     onState(listener: (snapshot: PluginRecoverySnapshot) => void): () => void
+  }
+  /** Fixed-origin Preset Square reads and Desktop-only verified archive installation. */
+  readonly presetSquare?: {
+    readonly mutationsEnabled: boolean
+    list(query: PresetSquareListQuery): Promise<PresetSquareListResult>
+    detail(query: PresetSquareDetailQuery): Promise<PresetSquareDetailResult>
+    previewInstall(request: PresetInstallPreviewRequest): Promise<PresetInstallPreviewResult>
+    install(request: PresetInstallRequest): Promise<PresetInstallResult>
+    checkRuntime(request: PresetRuntimeRequest): Promise<PresetRuntimeSnapshot>
+    installRuntime(request: PresetRuntimeRequest): Promise<PresetRuntimeSnapshot>
   }
 }
 

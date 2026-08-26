@@ -8,26 +8,40 @@ import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock, GenerateOptions, Message } from '@deepseek-ai/dsh-llm'
-import type { Session, SessionId } from '@deepseek-ai/dsh-session'
+import type { Session } from '@deepseek-ai/dsh-session'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { createScope } from '@deepseek-ai/dsh-scope'
 import type {} from '@deepseek-ai/dsh-fs'
 import type {} from '@deepseek-ai/dsh-skill'
 
+/** Settings namespace persisted for the Studio visual-enhancement bridge. */
 export const VISION_SETTINGS_NAMESPACE = settingsNamespace('vision-enhancement')
-export type VisionProvider = 'bailian' | 'openrouter'
+/** Compatible visual providers supported by the Studio bridge. */
+export type VisionProvider = 'bailian' | 'openrouter' | 'ollama' | 'vllm' | 'sglang' | 'custom'
 
 /** Writable application-owned credential refs; ambient provider vars remain read-only fallbacks. */
 export const BAILIAN_API_KEY_REF = credentialRef('DSH_VISION_BAILIAN_API_KEY')
+/** Application-owned OpenRouter credential ref used by the Studio visual bridge. */
 export const OPENROUTER_API_KEY_REF = credentialRef('DSH_VISION_OPENROUTER_API_KEY')
 const BAILIAN_FALLBACK_API_KEY_REF = credentialRef('DASHSCOPE_API_KEY')
 const OPENROUTER_FALLBACK_API_KEY_REF = credentialRef('OPENROUTER_API_KEY')
+const OLLAMA_API_KEY_REF = credentialRef('DSH_VISION_OLLAMA_API_KEY')
+const VLLM_API_KEY_REF = credentialRef('DSH_VISION_VLLM_API_KEY')
+const SGLANG_API_KEY_REF = credentialRef('DSH_VISION_SGLANG_API_KEY')
+const CUSTOM_API_KEY_REF = credentialRef('DSH_VISION_OPENAI_COMPATIBLE_API_KEY')
+/** Default verified Bailian visual model. */
 export const BAILIAN_VISION_MODEL = 'qwen3.8-max'
+/** Default verified OpenRouter visual model. */
 export const OPENROUTER_VISION_MODEL = 'openai/gpt-4.1-mini'
+/** Help page used to obtain a Bailian API key. */
 export const BAILIAN_API_KEY_URL = 'https://help.aliyun.com/zh/model-studio/get-api-key'
+/** OpenRouter page used to manage API keys. */
 export const OPENROUTER_API_KEY_URL = 'https://openrouter.ai/settings/keys'
 const BAILIAN_CHAT_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
 const OPENROUTER_CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions'
+const OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1'
+const VLLM_BASE_URL = 'http://127.0.0.1:8000/v1'
+const SGLANG_BASE_URL = 'http://127.0.0.1:30000/v1'
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024
 const MAX_RESPONSE_BYTES = 1024 * 1024
 const MAX_OBSERVATION_CACHE_ENTRIES = 64
@@ -46,10 +60,13 @@ interface VisionProviderSpec {
   id: VisionProvider
   name: string
   credentialRef: ReturnType<typeof credentialRef>
-  fallbackCredentialRef: ReturnType<typeof credentialRef>
+  fallbackCredentialRef?: ReturnType<typeof credentialRef>
   defaultModel: string
   apiKeyUrl: string
-  chatUrl: string
+  chatUrl?: string
+  defaultBaseUrl?: string
+  baseUrlEditable: boolean
+  apiKeyRequired: boolean
   modelEditable: boolean
 }
 
@@ -62,6 +79,8 @@ const VISION_PROVIDER_SPECS: Record<VisionProvider, VisionProviderSpec> = {
     defaultModel: BAILIAN_VISION_MODEL,
     apiKeyUrl: BAILIAN_API_KEY_URL,
     chatUrl: BAILIAN_CHAT_URL,
+    baseUrlEditable: false,
+    apiKeyRequired: true,
     modelEditable: false,
   },
   openrouter: {
@@ -72,22 +91,73 @@ const VISION_PROVIDER_SPECS: Record<VisionProvider, VisionProviderSpec> = {
     defaultModel: OPENROUTER_VISION_MODEL,
     apiKeyUrl: OPENROUTER_API_KEY_URL,
     chatUrl: OPENROUTER_CHAT_URL,
+    baseUrlEditable: false,
+    apiKeyRequired: true,
+    modelEditable: true,
+  },
+  ollama: {
+    id: 'ollama',
+    name: 'Ollama（本地）',
+    credentialRef: OLLAMA_API_KEY_REF,
+    defaultModel: '',
+    apiKeyUrl: 'https://docs.ollama.com/api/openai-compatibility',
+    defaultBaseUrl: OLLAMA_BASE_URL,
+    baseUrlEditable: true,
+    apiKeyRequired: false,
+    modelEditable: true,
+  },
+  vllm: {
+    id: 'vllm',
+    name: 'vLLM（本地）',
+    credentialRef: VLLM_API_KEY_REF,
+    defaultModel: '',
+    apiKeyUrl: 'https://docs.vllm.ai/en/stable/serving/openai_compatible_server/',
+    defaultBaseUrl: VLLM_BASE_URL,
+    baseUrlEditable: true,
+    apiKeyRequired: false,
+    modelEditable: true,
+  },
+  sglang: {
+    id: 'sglang',
+    name: 'SGLang（本地）',
+    credentialRef: SGLANG_API_KEY_REF,
+    defaultModel: '',
+    apiKeyUrl: 'https://docs.sglang.ai/developer_guide/bench_serving',
+    defaultBaseUrl: SGLANG_BASE_URL,
+    baseUrlEditable: true,
+    apiKeyRequired: false,
+    modelEditable: true,
+  },
+  custom: {
+    id: 'custom',
+    name: '自定义 OpenAI-compatible',
+    credentialRef: CUSTOM_API_KEY_REF,
+    defaultModel: '',
+    apiKeyUrl: 'https://platform.openai.com/docs/api-reference/chat/create',
+    baseUrlEditable: true,
+    apiKeyRequired: false,
     modelEditable: true,
   },
 }
-const VISION_PROVIDER_ORDER: readonly VisionProvider[] = ['bailian', 'openrouter']
+const VISION_PROVIDER_ORDER: readonly VisionProvider[] = [
+  'bailian', 'openrouter', 'ollama', 'vllm', 'sglang', 'custom',
+]
 
+/** Persisted visual-enhancement settings. */
 export interface VisionSettings {
   enabled?: boolean
   provider?: VisionProvider
   model?: string
+  baseUrl?: string
 }
 const VisionSettingsSchema: z<VisionSettings> = z.object({
   enabled: z.boolean().default(false),
-  provider: z.union(['bailian', 'openrouter']).default('bailian'),
+  provider: z.union(['bailian', 'openrouter', 'ollama', 'vllm', 'sglang', 'custom']).default('bailian'),
   model: z.string().default(BAILIAN_VISION_MODEL),
+  baseUrl: z.string().default(''),
 })
 
+/** Canonical image probe submitted for real provider verification. */
 export interface VisionTestInput {
   mediaType: ImageMediaType
   data: string
@@ -95,12 +165,15 @@ export interface VisionTestInput {
   name?: string
 }
 
+/** Image probe plus optional provider selection submitted when enabling. */
 export interface VisionEnableInput extends VisionTestInput {
   apiKey?: string
   provider?: VisionProvider
   model?: string
+  baseUrl?: string
 }
 
+/** Value-free provider status exposed to the client. */
 export interface VisionProviderStatus {
   id: VisionProvider
   name: string
@@ -108,26 +181,49 @@ export interface VisionProviderStatus {
   defaultModel: string
   apiKeyUrl: string
   modelEditable: boolean
+  defaultBaseUrl?: string
+  baseUrlEditable: boolean
+  apiKeyRequired: boolean
 }
 
+/** Host-authoritative visual-enhancement status. */
 export interface VisionStatus {
   enabled: boolean
   configured: boolean
   provider: VisionProvider
   model: string
   apiKeyUrl: string
+  baseUrl?: string
   providers: readonly VisionProviderStatus[]
 }
 
-export interface VisionTestResult { provider: VisionProvider; model: string; description: string }
+/** Verified visual description returned for one image probe. */
+export interface VisionTestResult { provider: VisionProvider; model: string; baseUrl?: string; description: string }
 
+/** Automatic image route selected for one exact session model. */
+export type VisionRouteMode = 'off' | 'native' | 'compatible' | 'unavailable'
+
+/** Exact image path selected for one current provider/model route. */
+export interface VisionRoute {
+  mode: VisionRouteMode
+  modelProvider: string
+  model: string
+  provider?: VisionProvider
+  providerName?: string
+  visionModel?: string
+}
+
+/** Runtime surface installed into the Host. */
 export interface VisionEnhancementRuntime {
   status(): Promise<VisionStatus>
+  route(modelProvider: string, model: string): Promise<VisionRoute>
+  activate(modelProvider: string, model: string): Promise<VisionRoute>
   test(input: VisionTestInput, signal?: AbortSignal): Promise<VisionTestResult>
   enable(input: VisionEnableInput, signal?: AbortSignal): Promise<VisionTestResult>
   isEnabled(): boolean
 }
 
+/** Durable observation recorded when an image is converted for a text-only model. */
 export interface VisionObservationEventData {
   attachmentId: string
   question: string
@@ -142,7 +238,13 @@ declare module '@deepseek-ai/dsh-session/types' {
   }
 }
 
-/** Ensure one exact model-visible visual observation exists in the durable Session log. */
+/**
+ * Ensure one exact model-visible visual observation exists in the durable Session log.
+ * @param session - Session that owns the durable observation event.
+ * @param input - Attachment, question, and model identity used for de-duplication.
+ * @param analyze - Deferred provider call used only when no observation exists.
+ * @returns The existing or newly generated visual description.
+ */
 export async function ensureLoggedVisionObservation(
   session: Session,
   input: Omit<VisionObservationEventData, 'description'>,
@@ -221,7 +323,49 @@ async function boundedJson(response: Response, providerName: string): Promise<Vi
 interface ResolvedVisionSelection {
   provider: VisionProvider
   model: string
+  baseUrl?: string
   spec: VisionProviderSpec
+}
+
+function normalizeBaseUrl(value: string | undefined, spec: VisionProviderSpec): string | undefined {
+  if (!spec.baseUrlEditable) return undefined
+  const candidate = value?.trim() || spec.defaultBaseUrl || ''
+  if (candidate === '') return ''
+  let parsed: URL
+  try {
+    parsed = new URL(candidate)
+  } catch {
+    throw new Error(`${spec.name} 服务地址不是有效 URL。`)
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username !== '' || parsed.password !== ''
+    || parsed.search !== '' || parsed.hash !== '') {
+    throw new Error(`${spec.name} 服务地址必须是无账号、查询参数和片段的 HTTP(S) URL。`)
+  }
+  parsed.pathname = parsed.pathname.replace(/\/+$/u, '') || '/'
+  return parsed.href.replace(/\/$/u, '')
+}
+
+function chatUrl(selection: ResolvedVisionSelection): string {
+  if (selection.spec.chatUrl !== undefined) return selection.spec.chatUrl
+  if (selection.baseUrl === undefined || selection.baseUrl === '') {
+    throw new Error(`请输入 ${selection.spec.name} 服务地址。`)
+  }
+  const parsed = new URL(selection.baseUrl)
+  let path = parsed.pathname.replace(/\/+$/u, '')
+  if (path === '') path = '/v1'
+  if (!path.endsWith('/chat/completions')) path += '/chat/completions'
+  parsed.pathname = path
+  return parsed.href
+}
+
+function selectionReady(selection: ResolvedVisionSelection): boolean {
+  if (selection.model.trim() === '') return false
+  try {
+    chatUrl(selection)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function resolveVisionSelection(settings: VisionSettings): ResolvedVisionSelection {
@@ -229,31 +373,45 @@ function resolveVisionSelection(settings: VisionSettings): ResolvedVisionSelecti
   const spec = VISION_PROVIDER_SPECS[provider]
   const configuredModel = settings.model?.trim()
   const model = configuredModel === undefined || configuredModel === '' ? spec.defaultModel : configuredModel
-  return { provider, model, spec }
+  const baseUrl = normalizeBaseUrl(settings.baseUrl, spec)
+  return { provider, model, spec, ...(baseUrl === undefined ? {} : { baseUrl }) }
 }
 
-function resolveRequestedSelection(provider: VisionProvider | undefined, model: string | undefined): ResolvedVisionSelection {
+function resolveRequestedSelection(
+  provider: VisionProvider | undefined,
+  model: string | undefined,
+  baseUrl: string | undefined,
+): ResolvedVisionSelection {
   const spec = VISION_PROVIDER_SPECS[provider ?? 'bailian']
   const requestedModel = model?.trim()
   if (!spec.modelEditable && requestedModel !== undefined && requestedModel !== '' && requestedModel !== spec.defaultModel) {
     throw new Error(`${spec.name} 视觉模型固定为 ${spec.defaultModel}。`)
   }
-  return {
+  const normalizedBaseUrl = spec.baseUrlEditable ? normalizeBaseUrl(baseUrl, spec) : undefined
+  const selection: ResolvedVisionSelection = {
     provider: spec.id,
     model: requestedModel === undefined || requestedModel === '' ? spec.defaultModel : requestedModel,
     spec,
+    ...(normalizedBaseUrl === undefined ? {} : { baseUrl: normalizedBaseUrl }),
   }
+  if (selection.model === '') throw new Error(`请输入 ${spec.name} 视觉模型 ID。`)
+  chatUrl(selection)
+  return selection
 }
 
 async function resolveProviderCredential(ctx: Context, spec: VisionProviderSpec): Promise<string | undefined> {
   const managed = await ctx.credentials.resolve(spec.credentialRef)
   if (managed !== undefined) return managed.value
-  return (await ctx.credentials.resolve(spec.fallbackCredentialRef))?.value
+  return spec.fallbackCredentialRef === undefined
+    ? undefined
+    : (await ctx.credentials.resolve(spec.fallbackCredentialRef))?.value
 }
 
 async function providerConfigured(ctx: Context, spec: VisionProviderSpec): Promise<boolean> {
+  if (!spec.apiKeyRequired) return true
   if ((await ctx.credentials.describe(spec.credentialRef)).configured) return true
-  return (await ctx.credentials.describe(spec.fallbackCredentialRef)).configured
+  return spec.fallbackCredentialRef !== undefined
+    && (await ctx.credentials.describe(spec.fallbackCredentialRef)).configured
 }
 
 async function visionAnalyze(
@@ -263,28 +421,30 @@ async function visionAnalyze(
   signal?: AbortSignal,
 ): Promise<string> {
   const credential = await resolveProviderCredential(ctx, selection.spec)
-  if (credential === undefined) throw new Error(`尚未配置 ${selection.spec.name} API Key。`)
+  if (credential === undefined && selection.spec.apiKeyRequired) {
+    throw new Error(`尚未配置 ${selection.spec.name} API Key。`)
+  }
   const requestSignal = signal === undefined
     ? AbortSignal.timeout(60_000)
     : AbortSignal.any([signal, AbortSignal.timeout(60_000)])
   const image = { type: 'image_url', image_url: { url: `data:${input.mediaType};base64,${Buffer.from(input.data).toString('base64')}` } }
   const text = { type: 'text', text: input.question?.trim() || DEFAULT_QUESTION }
-  const response = await fetch(selection.spec.chatUrl, {
+  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  if (credential !== undefined) headers['authorization'] = `Bearer ${credential}`
+  const response = await fetch(chatUrl(selection), {
     method: 'POST',
-    headers: {
-      authorization: `Bearer ${credential}`,
-      'content-type': 'application/json',
-    },
+    headers,
     body: JSON.stringify({
       model: selection.model,
       ...selection.provider === 'bailian' ? { enable_thinking: false } : {},
       max_tokens: 1024,
       messages: [{
         role: 'user',
-        content: selection.provider === 'openrouter' ? [text, image] : [image, text],
+        content: selection.provider === 'bailian' ? [image, text] : [text, image],
       }],
     }),
     signal: requestSignal,
+    redirect: 'error',
   })
   const payload = await boundedJson(response, selection.spec.name)
   if (!response.ok) {
@@ -346,6 +506,24 @@ async function transformMessages(
   return transformed
 }
 
+function suppressImageBlocks(blocks: readonly ContentBlock[]): ContentBlock[] {
+  return blocks.map((block): ContentBlock => {
+    if (block.type === 'image') {
+      return { type: 'text', text: '[图片未发送：视觉增强已关闭。]' }
+    }
+    if (block.type === 'tool-result' && hasImage(block.content)) {
+      return { ...block, content: suppressImageBlocks(block.content) }
+    }
+    return block
+  })
+}
+
+function suppressMessageImages(messages: readonly Message[]): Message[] {
+  return messages.map(message => hasImage(message.content)
+    ? { ...message, content: suppressImageBlocks(message.content) }
+    : message)
+}
+
 function imageMediaType(path: string): ImageMediaType | undefined {
   switch (extname(path).toLowerCase()) {
     case '.png': return 'image/png'
@@ -357,14 +535,40 @@ function imageMediaType(path: string): ImageMediaType | undefined {
   }
 }
 
-/** Install settings, global Skill/Tool and the text-model image bridge. */
+/**
+ * Install settings, global Skill and Tool surfaces, and the text-model image bridge.
+ * @param ctx - Host context that owns settings, credentials, agents, and attachments.
+ * @returns The installed visual-enhancement runtime.
+ */
 export function installVisionEnhancement(ctx: Context): VisionEnhancementRuntime {
   let current: () => VisionSettings = () => ({ enabled: false })
   let credentialValidated = true
+  let compatibleProviderReady = false
+  let compatibilityRefreshGeneration = 0
   let enabling = false
   let enableQueue: Promise<void> = Promise.resolve()
   const observationCache = new Map<string, Promise<string>>()
   const mountedAgents = new Map<Agent, () => void>()
+
+  const resolveRoute = async (modelProvider: string, model: string): Promise<VisionRoute> => {
+    if (current().enabled !== true) return { mode: 'off', modelProvider, model }
+    const info = await ctx.llm.resolveModelInfo(modelProvider, model)
+    if (info.inputModalities?.includes('image') === true) {
+      return { mode: 'native', modelProvider, model }
+    }
+    const selection = resolveVisionSelection(current())
+    if (!selectionReady(selection) || !credentialValidated || !await providerConfigured(ctx, selection.spec)) {
+      return { mode: 'unavailable', modelProvider, model }
+    }
+    return {
+      mode: 'compatible',
+      modelProvider,
+      model,
+      provider: selection.provider,
+      providerName: selection.spec.name,
+      visionModel: selection.model,
+    }
+  }
 
   const visionTool = defineTool({
     name: 'vision_analyze',
@@ -387,7 +591,7 @@ export function installVisionEnhancement(ctx: Context): VisionEnhancementRuntime
     timeoutMs: 65_000,
     isConcurrencySafe: () => true,
     async execute(args, exec) {
-      if (!current().enabled) throw new Error('视觉能力增强尚未开启，请先在通用设置中完成视觉 API Key 验证。')
+      if (!current().enabled) throw new Error('视觉能力增强尚未开启，请先在通用设置中完成视觉提供方验证。')
       const selection = resolveVisionSelection(current())
       const mediaType = imageMediaType(args.file_path)
       if (mediaType === undefined) throw new Error('vision_analyze 仅支持 PNG/JPEG/WebP/GIF 图片。')
@@ -411,7 +615,7 @@ export function installVisionEnhancement(ctx: Context): VisionEnhancementRuntime
     mountedAgents.get(agent)?.()
     mountedAgents.delete(agent)
   }
-  const isOperational = (): boolean => current().enabled === true && credentialValidated
+  const isOperational = (): boolean => current().enabled === true && compatibleProviderReady
   const mountAgent = (agent: Agent): void => {
     if (!isOperational() || mountedAgents.has(agent)) return
     // Reuse the Agent's existing scope key while inheriting this plugin's
@@ -455,10 +659,25 @@ export function installVisionEnhancement(ctx: Context): VisionEnhancementRuntime
     }
   }
 
+  const refreshCompatibleProvider = async (): Promise<void> => {
+    const generation = ++compatibilityRefreshGeneration
+    const selection = resolveVisionSelection(current())
+    const ready = selectionReady(selection) && credentialValidated && await providerConfigured(ctx, selection.spec)
+    if (generation !== compatibilityRefreshGeneration) return
+    compatibleProviderReady = ready
+    reconcileAgentMounts()
+  }
+  const scheduleCompatibleProviderRefresh = (): void => {
+    void refreshCompatibleProvider().catch((error: unknown) => {
+      ctx.logger.warn('vision-enhancement: failed to refresh compatible provider state: %s', error instanceof Error ? error.message : String(error))
+    })
+  }
+
   installSettingsSection(ctx, VISION_SETTINGS_NAMESPACE, VisionSettingsSchema, { enabled: false }, {
     setSource: (source) => { current = source },
-    onChange: reconcileAgentMounts,
+    onChange: scheduleCompatibleProviderRefresh,
   })
+  scheduleCompatibleProviderRefresh()
 
   ctx.on('agent/created', ({ agent }) => { mountAgent(agent) })
   ctx.on('agent/disposed', ({ agent }) => { unmountAgent(agent) })
@@ -466,13 +685,15 @@ export function installVisionEnhancement(ctx: Context): VisionEnhancementRuntime
     for (const agent of [...mountedAgents.keys()]) unmountAgent(agent)
   }, 'visionEnhancement.agentMounts()')
 
-  ctx.on('credentials/updated', (ref) => {
+  ctx.on('credentials/reference-updated', (ref) => {
     const active = resolveVisionSelection(current()).spec
     if (ref !== active.credentialRef && ref !== active.fallbackCredentialRef) return
     observationCache.clear()
-    if (enabling) return
     credentialValidated = false
+    compatibilityRefreshGeneration++
+    compatibleProviderReady = false
     reconcileAgentMounts()
+    if (enabling) return
     if (current().enabled) {
       void ctx.settings.update(VISION_SETTINGS_NAMESPACE, { enabled: false }).catch((error: unknown) => {
         ctx.logger.warn('vision-enhancement: failed to disable after credential change: %s', error instanceof Error ? error.message : String(error))
@@ -488,7 +709,7 @@ export function installVisionEnhancement(ctx: Context): VisionEnhancementRuntime
     signal?: AbortSignal,
   ): Promise<string> => {
     const attachmentId = String(attachment.attachmentId)
-    const cacheKey = `${String(session.id)}\0${selection.provider}\0${selection.model}\0${attachmentId}\0${question}`
+    const cacheKey = `${String(session.id)}\0${selection.provider}\0${selection.baseUrl ?? ''}\0${selection.model}\0${attachmentId}\0${question}`
     return ensureLoggedVisionObservation(session, { attachmentId, question, model: selection.model }, async () => {
       let pending = observationCache.get(cacheKey)
       if (pending === undefined) {
@@ -516,11 +737,23 @@ export function installVisionEnhancement(ctx: Context): VisionEnhancementRuntime
   }
 
   ctx.on('llm/stream', (options: GenerateOptions, next) => {
-    if (!isOperational() || !options.messages.some(message => hasImage(message.content))) return next()
+    if (!options.messages.some(message => hasImage(message.content))) return next()
     return (async function* () {
+      const route = await resolveRoute(options.provider, options.model)
+      if (route.mode === 'native') {
+        yield* next()
+        return
+      }
+      if (route.mode === 'off') {
+        yield* ctx.llm.stream({ ...options, messages: suppressMessageImages(options.messages) })
+        return
+      }
+      if (route.mode === 'unavailable') {
+        throw new Error('当前模型不支持原生图片，且尚未配置可用的兼容视觉提供方。')
+      }
       const selection = resolveVisionSelection(current())
       const agent = ctx.agents.currentInitiator()
-        ?? (options.sessionId === undefined ? undefined : ctx.agents.get(options.sessionId as SessionId))
+        ?? (options.sessionId === undefined ? undefined : ctx.agents.get(options.sessionId))
       if (agent === undefined) {
         throw new Error('视觉能力增强无法定位当前 Session，因此拒绝发送未记录的视觉结果。')
       }
@@ -532,7 +765,22 @@ export function installVisionEnhancement(ctx: Context): VisionEnhancementRuntime
   }, { global: true })
 
   return {
-    isEnabled: isOperational,
+    isEnabled: () => current().enabled === true,
+    route: resolveRoute,
+    async activate(modelProvider, model) {
+      if (current().enabled !== true) {
+        const info = await ctx.llm.resolveModelInfo(modelProvider, model)
+        if (info.inputModalities?.includes('image') !== true) {
+          const selection = resolveVisionSelection(current())
+          if (!selectionReady(selection) || !credentialValidated || !await providerConfigured(ctx, selection.spec)) {
+            throw new Error('当前模型不支持原生图片，请先配置并验证兼容视觉提供方。')
+          }
+        }
+        await ctx.settings.update(VISION_SETTINGS_NAMESPACE, { enabled: true })
+        reconcileAgentMounts()
+      }
+      return await resolveRoute(modelProvider, model)
+    },
     async status() {
       const selection = resolveVisionSelection(current())
       const providers = await Promise.all(VISION_PROVIDER_ORDER.map(async (id): Promise<VisionProviderStatus> => {
@@ -544,14 +792,20 @@ export function installVisionEnhancement(ctx: Context): VisionEnhancementRuntime
           defaultModel: spec.defaultModel,
           apiKeyUrl: spec.apiKeyUrl,
           modelEditable: spec.modelEditable,
+          ...(spec.defaultBaseUrl === undefined ? {} : { defaultBaseUrl: spec.defaultBaseUrl }),
+          baseUrlEditable: spec.baseUrlEditable,
+          apiKeyRequired: spec.apiKeyRequired,
         }
       }))
+      const selectedConfigured = selectionReady(selection)
+        && (providers.find(provider => provider.id === selection.provider)?.configured ?? false)
       return {
         enabled: current().enabled === true,
-        configured: providers.find(provider => provider.id === selection.provider)?.configured ?? false,
+        configured: selectedConfigured,
         provider: selection.provider,
         model: selection.model,
         apiKeyUrl: selection.spec.apiKeyUrl,
+        ...(selection.baseUrl === undefined || selection.baseUrl === '' ? {} : { baseUrl: selection.baseUrl }),
         providers,
       }
     },
@@ -564,11 +818,16 @@ export function installVisionEnhancement(ctx: Context): VisionEnhancementRuntime
       const description = await visionAnalyze(ctx, selection, {
         data, mediaType: input.mediaType, ...input.question === undefined ? {} : { question: input.question },
       }, signal)
-      return { provider: selection.provider, model: selection.model, description }
+      return {
+        provider: selection.provider,
+        model: selection.model,
+        ...(selection.baseUrl === undefined ? {} : { baseUrl: selection.baseUrl }),
+        description,
+      }
     },
     enable(input, signal) {
       const run = async (): Promise<VisionTestResult> => {
-        const selection = resolveRequestedSelection(input.provider, input.model)
+        const selection = resolveRequestedSelection(input.provider, input.model, input.baseUrl)
         const apiKey = input.apiKey?.trim()
         if (apiKey === '') throw new Error(`${selection.spec.name} API Key 不能为空。`)
         enabling = true
@@ -577,6 +836,9 @@ export function installVisionEnhancement(ctx: Context): VisionEnhancementRuntime
         try {
           if (current().enabled) await ctx.settings.update(VISION_SETTINGS_NAMESPACE, { enabled: false })
           if (apiKey !== undefined) await ctx.credentials.set(selection.spec.credentialRef, apiKey)
+          if (selection.spec.apiKeyRequired && !await providerConfigured(ctx, selection.spec)) {
+            throw new Error(`尚未配置 ${selection.spec.name} API Key。`)
+          }
           const data = decodeCanonicalBase64(input.data)
           await ctx.attachments.validateImage({
             data, mediaType: input.mediaType, ...input.name === undefined ? {} : { name: input.name },
@@ -585,13 +847,20 @@ export function installVisionEnhancement(ctx: Context): VisionEnhancementRuntime
             data, mediaType: input.mediaType, ...input.question === undefined ? {} : { question: input.question },
           }, signal)
           credentialValidated = true
+          compatibleProviderReady = true
           await ctx.settings.update(VISION_SETTINGS_NAMESPACE, {
             enabled: true,
             provider: selection.provider,
             model: selection.model,
+            baseUrl: selection.baseUrl ?? '',
           })
           reconcileAgentMounts()
-          return { provider: selection.provider, model: selection.model, description }
+          return {
+            provider: selection.provider,
+            model: selection.model,
+            ...(selection.baseUrl === undefined ? {} : { baseUrl: selection.baseUrl }),
+            description,
+          }
         } finally {
           enabling = false
           if (!credentialValidated) reconcileAgentMounts()

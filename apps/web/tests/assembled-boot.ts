@@ -8,56 +8,126 @@
 // Keyless and deterministic: the fixture is the fake server, so nothing here
 // reaches a model or the network.
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { createRequire } from 'node:module'
+import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { act, cleanup } from '@testing-library/react'
 import { afterEach, beforeEach, vi } from 'vitest'
-import type { WebBootEntry } from '@deepseek-ai/dsh-client-modules/client'
+import { evaluate, isJsExpr } from '@deepseek-ai/cordis-plugin-loader'
+import { bootInjections, orderByModuleGraph } from '@deepseek-ai/dsh-client-modules'
+import type { ClientModuleLoaderTarget, WebBootEntry } from '@deepseek-ai/dsh-client-modules/client'
 import { AppWebEntry } from '@deepseek-ai/dsh-client-web'
 
-/** One assembled boot entry plus the workspace bundle it loads. */
+/** One assembled boot entry plus the built client artifact it loads. */
 export type AssembledBootPlugin = WebBootEntry & { readonly bundlePath: string }
 
-/** Boot entries for the minimal assembled graph, each carrying the workspace bundle it loads. */
-const PLUGINS: readonly AssembledBootPlugin[] = [
-  { id: '@deepseek-ai/dsh-typert-registry', bundlePath: 'packages/typert/registry/lib/client.js', url: '/plugins/typert-registry.js', rev: 'fx', inject: [], immediately: true },
-  { id: '@deepseek-ai/dsh-client-connection', bundlePath: 'packages/client/connection/lib/client.js', url: '/plugins/connection.js', rev: 'fx', inject: [], immediately: true },
-  { id: '@deepseek-ai/dsh-api-gateway', bundlePath: 'packages/api/gateway/lib/client.js', url: '/plugins/api-gateway.js', rev: 'fx', inject: ['@deepseek-ai/dsh-typert-registry', '@deepseek-ai/dsh-client-connection'], immediately: true },
-  { id: '@deepseek-ai/dsh-api-remotes', bundlePath: 'packages/api/remotes/lib/client.js', url: '/plugins/api-remotes.js', rev: 'fx', inject: ['@deepseek-ai/dsh-api-gateway'], immediately: true },
-  // The settings domain base: the only provider of ctx.settingsScope, which the
-  // locale and ui-theme rows below inject for their preference rows. Without it
-  // both stay pending and ui-layout never activates, so nothing renders.
-  { id: '@deepseek-ai/dsh-client-ui-settings', bundlePath: 'packages/client/ui-settings/lib/client.js', url: '/plugins/ui-settings.js', rev: 'fx', inject: ['@deepseek-ai/dsh-client-connection', '@deepseek-ai/dsh-client-runtime', '@deepseek-ai/dsh-api-remotes'], immediately: true },
-  { id: '@deepseek-ai/dsh-client-runtime', bundlePath: 'packages/client/runtime/lib/client.js', url: '/plugins/runtime.js', rev: 'fx', inject: ['@deepseek-ai/dsh-client-connection', '@deepseek-ai/dsh-typert-registry', '@deepseek-ai/dsh-api-gateway'], immediately: true },
-  { id: '@deepseek-ai/dsh-client-ui-theme', bundlePath: 'packages/client/ui-theme/lib/client.js', url: '/plugins/ui-theme.js', rev: 'fx', inject: ['@deepseek-ai/dsh-client-connection', '@deepseek-ai/dsh-client-runtime', '@deepseek-ai/dsh-client-locale', '@deepseek-ai/dsh-client-ui-settings', '@deepseek-ai/dsh-api-remotes'], immediately: true },
-  { id: '@deepseek-ai/dsh-client-locale', bundlePath: 'packages/client/locale/lib/client.js', url: '/plugins/locale.js', rev: 'fx', inject: ['@deepseek-ai/dsh-client-connection', '@deepseek-ai/dsh-client-runtime', '@deepseek-ai/dsh-client-ui-settings', '@deepseek-ai/dsh-api-remotes'], immediately: true },
-  { id: '@deepseek-ai/dsh-client-ui-layout', bundlePath: 'packages/client/ui-layout/lib/client.js', url: '/plugins/ui-layout.js', rev: 'fx', inject: ['@deepseek-ai/dsh-client-runtime'] },
-  { id: '@deepseek-ai/dsh-client-ui-sidebar', bundlePath: 'packages/client/ui-sidebar/lib/client.js', url: '/plugins/ui-sidebar.js', rev: 'fx', inject: ['@deepseek-ai/dsh-client-ui-layout'] },
-  { id: '@deepseek-ai/dsh-client-ui-conversation', bundlePath: 'packages/client/ui-conversation/lib/client.js', url: '/plugins/ui-conversation.js', rev: 'fx', inject: ['@deepseek-ai/dsh-client-ui-layout'] },
-  { id: '@deepseek-ai/dsh-client-ui-tool', bundlePath: 'packages/client/ui-tool/lib/client.js', url: '/plugins/ui-tool.js', rev: 'fx', inject: ['@deepseek-ai/dsh-client-runtime', '@deepseek-ai/dsh-client-locale', '@deepseek-ai/dsh-client-ui-conversation'] },
-  { id: '@deepseek-ai/dsh-client-ui-workflow-run', bundlePath: 'packages/client/ui-workflow-run/lib/client.js', url: '/plugins/ui-workflow-run.js', rev: 'fx', inject: ['@deepseek-ai/dsh-client-locale', '@deepseek-ai/dsh-client-runtime', '@deepseek-ai/dsh-client-ui-conversation'] },
+interface ClientPackageManifest {
+  name?: string
+  exports?: Record<string, string | { default?: string }>
+  dsh?: {
+    client?: {
+      platform?: string
+      inject?: string[]
+      external?: string[]
+      immediately?: boolean
+    }
+  }
+}
+
+interface ComposedEntry {
+  name?: unknown
+  disabled?: unknown
+}
+
+interface BootComposition {
+  loadOverlayPatches(binName: string, file: string): unknown[]
+  composeEntries(layers: readonly unknown[][]): ComposedEntry[]
+}
+
+const REPO_ROOT = process.cwd()
+const BUNDLE_LAYERS = [
   {
-    id: '@deepseek-ai/dsh-client-ui-workspace',
-    bundlePath: 'packages/client/ui-workspace/lib/client.js',
-    url: '/plugins/ui-workspace.js',
-    rev: 'fx',
-    inject: [
-      '@deepseek-ai/dsh-client-runtime',
-      '@deepseek-ai/dsh-client-ui-conversation',
-      '@deepseek-ai/dsh-client-ui-sidebar',
-    ],
+    manifest: join(REPO_ROOT, 'packages/bundle/base/package.json'),
+    patch: join(REPO_ROOT, 'packages/bundle/base/cordis.patch.yml'),
   },
-  { id: '@deepseek-ai/dsh-session-log-export', bundlePath: 'packages/session-query/session-log-export/lib/client.js', url: '/plugins/session-log-download.js', rev: 'fx', inject: ['@deepseek-ai/dsh-client-ui-commands', '@deepseek-ai/dsh-client-ui-conversation'] },
-  { id: '@deepseek-ai/dsh-client-ui-trajectory', bundlePath: 'packages/client/ui-trajectory/lib/client.js', url: '/plugins/ui-trajectory.js', rev: 'fx', inject: ['@deepseek-ai/dsh-client-ui-conversation'] },
-]
+  {
+    manifest: join(REPO_ROOT, 'packages/bundle/web-app/package.json'),
+    patch: join(REPO_ROOT, 'packages/bundle/web-app/cordis.patch.yml'),
+  },
+] as const
+const bundleResolvers = BUNDLE_LAYERS.map(layer => createRequire(layer.manifest))
+const webBundleResolver = bundleResolvers[1]
+if (webBundleResolver === undefined) throw new Error('assembled boot: web bundle resolver missing')
+const appBoot = await import(pathToFileURL(webBundleResolver.resolve('@deepseek-ai/dsh-app-boot')).href) as unknown as BootComposition
+
+function resolvePackageManifest(specifier: string): string | undefined {
+  for (const require of bundleResolvers) {
+    try {
+      return require.resolve(`${specifier}/package.json`)
+    } catch {
+      continue
+    }
+  }
+  return undefined
+}
+
+function resolveClientExport(packagePath: string, pkg: ClientPackageManifest): string {
+  const declared = pkg.exports?.['./client']
+  const relative = typeof declared === 'string' ? declared : declared?.default
+  if (relative === undefined) {
+    throw new Error(`assembled boot: ${pkg.name ?? packagePath} declares dsh.client without a ./client export`)
+  }
+  return resolve(dirname(packagePath), relative)
+}
+
+function isEntryDisabled(value: unknown): boolean {
+  if (isJsExpr(value)) return Boolean(evaluate({ process }, value.__jsExpr))
+  return value === true
+}
+
+/** Derive the assembled browser graph from the same bundle patches and package declarations as `dsh web`. */
+function loadAssembledPlugins(): readonly AssembledBootPlugin[] {
+  const entries = appBoot.composeEntries(BUNDLE_LAYERS.map(layer =>
+    appBoot.loadOverlayPatches('assembled boot', layer.patch)))
+  const plugins = new Map<string, AssembledBootPlugin>()
+  for (const entry of entries) {
+    if (isEntryDisabled(entry.disabled) || typeof entry.name !== 'string') continue
+    const packagePath = resolvePackageManifest(entry.name)
+    if (packagePath === undefined) continue
+    const pkg = JSON.parse(readFileSync(packagePath, 'utf8')) as ClientPackageManifest
+    const declaration = pkg.dsh?.client
+    if (declaration?.platform !== 'web') continue
+    if (pkg.name !== entry.name) {
+      throw new Error(`assembled boot: ${entry.name} resolved package ${pkg.name ?? '<unnamed>'}`)
+    }
+    plugins.set(entry.name, {
+      id: entry.name,
+      bundlePath: resolveClientExport(packagePath, pkg),
+      url: `/plugins/${entry.name}/client.js?rev=fx`,
+      rev: 'fx',
+      ...(declaration.inject === undefined ? {} : { inject: declaration.inject }),
+      ...(declaration.external === undefined ? {} : { external: declaration.external }),
+      ...(declaration.immediately === true ? { immediately: true } : {}),
+    })
+  }
+  return orderByModuleGraph([...plugins.values()]).map(({ id }) => {
+    const plugin = plugins.get(id)
+    /* v8 ignore next -- orderByModuleGraph returns the input row identities */
+    if (plugin === undefined) throw new Error(`assembled boot: ordered unknown client package ${id}`)
+    return plugin
+  })
+}
+
+const PLUGINS = loadAssembledPlugins()
 
 const bundles = new Map(PLUGINS.map(plugin => [
   plugin.url,
-  readFileSync(join(process.cwd(), plugin.bundlePath), 'utf8'),
+  readFileSync(plugin.bundlePath, 'utf8'),
 ]))
 
 interface FixtureWindow extends Window {
   __DSH_BOOT__?: { rev: string; entries: WebBootEntry[] }
-  __ModuleLoader__?: unknown
+  __ModuleLoader__?: ClientModuleLoaderTarget
 }
 
 class ResizeObserverStub {
@@ -66,8 +136,13 @@ class ResizeObserverStub {
   unobserve(): void {}
 }
 
+class EventSourceStub {
+  addEventListener(): void {}
+  close(): void {}
+}
+
 const win = window as FixtureWindow
-let unmount: (() => void) | undefined
+let unmount: (() => Promise<void>) | undefined
 
 /**
  * Register the per-test jsdom setup and teardown the assembled boot needs:
@@ -90,14 +165,15 @@ export function installAssembledBootEnv(options: {
     Object.defineProperty(navigator, 'language', { value: 'en-US', configurable: true })
     document.title = 'DeepSeek Harness'
     vi.stubGlobal('ResizeObserver', ResizeObserverStub)
+    vi.stubGlobal('EventSource', EventSourceStub)
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) =>
       setTimeout(() => { callback(0) }, 0) as unknown as number)
     vi.stubGlobal('cancelAnimationFrame', (id: number) => { clearTimeout(id) })
     options.setup?.()
   })
 
-  afterEach(() => {
-    act(() => { unmount?.() })
+  afterEach(async () => {
+    await act(async () => { await unmount?.() })
     unmount = undefined
     cleanup()
     delete win.__DSH_BOOT__
@@ -119,18 +195,34 @@ export function installAssembledBootEnv(options: {
 /**
  * Mount the assembled application on the fixture transport; the teardown
  * registered by installAssembledBootEnv disposes it.
+ * @param input - fixture query string, or extra Studio client plugins appended to the assembled graph.
  */
-export function mountAssembledApp(extraPlugins: readonly AssembledBootPlugin[] = []): void {
-  history.replaceState(null, '', '/?fixture')
+export function mountAssembledApp(input: string | readonly AssembledBootPlugin[] = '?fixture'): void {
+  const search = typeof input === 'string' ? input : '?fixture'
+  const extraPlugins = typeof input === 'string' ? [] : input
+  const pluginsById = new Map(PLUGINS.map(plugin => [plugin.id, plugin]))
+  for (const plugin of extraPlugins) pluginsById.set(plugin.id, plugin)
+  const plugins = [...pluginsById.values()]
+  const assembledBundles = new Map(bundles)
+  for (const plugin of extraPlugins) {
+    assembledBundles.set(plugin.url, readFileSync(resolve(REPO_ROOT, plugin.bundlePath), 'utf8'))
+  }
+  history.replaceState(null, '', `/${search}`)
   const root = document.createElement('div')
   root.id = 'root'
   document.body.appendChild(root)
-  const plugins = [...PLUGINS, ...extraPlugins]
-  const assembledBundles = new Map(bundles)
-  for (const plugin of extraPlugins) {
-    assembledBundles.set(plugin.url, readFileSync(join(process.cwd(), plugin.bundlePath), 'utf8'))
-  }
   win.__DSH_BOOT__ = { rev: 'fx', entries: plugins.map(({ bundlePath: _bundlePath, ...plugin }) => plugin) }
+  const [facadeRow] = bootInjections(win.__DSH_BOOT__)
+  if (facadeRow?.kind !== 'script') throw new Error('missing injected ModuleLoader facade row')
+  ;(0, eval)(facadeRow.text)
+  // Mirror the blocking Host-injected scripts before the Vite entry calls create().
+  for (const id of ['@deepseek-ai/dsh-client-modules', '@deepseek-ai/dsh-client-runtime']) {
+    const plugin = plugins.find(candidate => candidate.id === id)
+    if (plugin === undefined) throw new Error(`missing parser-preloaded fixture row ${id}`)
+    const code = assembledBundles.get(plugin.url)
+    if (code === undefined) throw new Error(`missing built bundle ${plugin.url}`)
+    ;(0, eval)(code)
+  }
   act(() => {
     const entry = new AppWebEntry(root, {
       loadBundle: async (url) => {
@@ -140,7 +232,7 @@ export function mountAssembledApp(extraPlugins: readonly AssembledBootPlugin[] =
       },
     })
     void entry.run()
-    unmount = () => { entry.dispose() }
+    unmount = () => entry.dispose()
   })
 }
 

@@ -41,6 +41,38 @@ describe('PluginRuntimeVerifier', () => {
     ).verifyDeactivation('http://127.0.0.1:4102', candidate, prior)).rejects.toThrow('unrelated Loader entry')
   })
 
+  it('can attribute undeclared Skill removal to a target whose Loader entry disappeared', async () => {
+    const candidate = BUNDLED_CATALOG.preflights.find(value => value.pluginId === 'fixture.workspace-tools')!
+    const fetcher: typeof fetch = async () => new Response(JSON.stringify({
+      type: 'server-response',
+      rpcId: 'runtime-contract',
+      result: {
+        ok: true,
+        value: {
+          entries: [{ entryId: 'unrelated.entry', enabled: true, fiberPhase: 'active' }],
+          clientModules: ['@fixture/unrelated-client'],
+          skillIds: ['unrelated-skill'],
+        },
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+    const prior = {
+      entries: [
+        { entryId: 'include:fixture.workspace-tools', enabled: true, fiberPhase: 'active' },
+        { entryId: 'unrelated.entry', enabled: true, fiberPhase: 'active' },
+      ],
+      clientModules: ['@deepseek-ai/dsh-plugin-center-fixture', '@fixture/unrelated-client'],
+      skillIds: ['undeclared-target-skill', 'unrelated-skill'],
+    }
+
+    await expect(new PluginRuntimeVerifier(fetcher, () => 'runtime-contract').verifyDeactivation(
+      'http://127.0.0.1:4102',
+      candidate,
+      prior,
+      undefined,
+      true,
+    )).resolves.toMatchObject({ skillIds: ['unrelated-skill'] })
+  })
+
   it('recovers across Host restarts without requiring live preset-instance entries', async () => {
     const fetcher: typeof fetch = async () => new Response(JSON.stringify({
       type: 'server-response',

@@ -12,7 +12,10 @@ import {
   operation,
 } from './fixtures.ts'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  window.history.replaceState(null, '', '/')
+})
 
 const t = ((key: PluginCenterLocaleKey): string => en[key]) as PluginCenterTabProps['t']
 
@@ -59,6 +62,21 @@ function row(name: string): HTMLElement {
 }
 
 describe('retained management paths', () => {
+  it('restores the expanded installed manager from the URL and persists its toggle', async () => {
+    window.history.replaceState(null, '', '/?dsh-plugin-center-view=installed')
+    render(<PluginCenterTab {...props()} />)
+
+    expect(await screen.findByText('Local developer Bundle')).toBeTruthy()
+    const toggle = screen.getByRole('button', { name: en.manageInstalled })
+    fireEvent.click(toggle)
+    expect(screen.queryByText('Local developer Bundle')).toBeNull()
+    expect(new URL(window.location.href).searchParams.has('dsh-plugin-center-view')).toBe(false)
+
+    fireEvent.click(toggle)
+    expect(await screen.findByText('Local developer Bundle')).toBeTruthy()
+    expect(new URL(window.location.href).searchParams.get('dsh-plugin-center-view')).toBe('installed')
+  })
+
   it('shows authority-derived system, catalog, disabled, and local rows and keeps existing Settings links reachable', async () => {
     const openPluginSettings = vi.fn<PluginCenterTabProps['openPluginSettings']>()
     render(<PluginCenterTab {...props({ openPluginSettings })} />)

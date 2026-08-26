@@ -3,14 +3,16 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import Schema from '@deepseek-ai/schemastery'
-import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-web-react'
+import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
 import type { RpcResponse, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
 import { ModelsSection, providerCopy } from '../src/client/ModelsSection.tsx'
-import type { ModelsSectionInjected } from '../src/client/ModelsSection.tsx'
+import type { ModelsSectionInjected, ModelsSectionProps } from '../src/client/ModelsSection.tsx'
 import { CustomProviderCard } from '../src/client/CustomProviderCard.tsx'
 import { formatCapacity, parseCapacity } from '../src/client/DeepSeekModelsEditor.tsx'
+import { SettingsDescribeMirror } from '@deepseek-ai/dsh-client-ui-settings/src/client/settings-mirror.ts'
 import { ModelsSettingsStore, deriveKeyRef, protocolChoices } from '../src/client/store.ts'
 import { en } from '../src/client/locales.ts'
+import { settingsSchema } from './settings-schema.client.ts'
 
 afterEach(cleanup)
 
@@ -139,12 +141,14 @@ function firstMutate(mutate: ReturnType<typeof vi.fn>): MutateCall {
 
 async function mountSection(options: Parameters<typeof scriptedFace>[0] = {}) {
   const scripted = scriptedFace(options)
-  const controller = new ModelsSettingsStore(scripted.face as unknown as WireFace)
+  const controller = new ModelsSettingsStore(
+    scripted.face as unknown as WireFace, settingsSchema, new SettingsDescribeMirror(scripted.face as never))
   await controller.load()
-  const injected: ModelsSectionInjected = {
+  const injected: ModelsSectionProps = {
     controller,
     useSnapshot: bindSnapshotSelector(controller.store),
     api: scripted.face as never,
+    schema: settingsSchema,
     t,
   }
   render(<ModelsSection {...injected} />)
@@ -183,10 +187,10 @@ function within_(scope: HTMLElement, label: string): HTMLElement {
 describe('protocolChoices', () => {
   it('reads the protocols out of the namespace schema and nothing else', async () => {
     const { namespace } = scriptedFace()
-    expect(protocolChoices(namespace)).toEqual(PROTOCOLS)
-    expect(protocolChoices(undefined)).toEqual([])
+    expect(protocolChoices(namespace, settingsSchema)).toEqual(PROTOCOLS)
+    expect(protocolChoices(undefined, settingsSchema)).toEqual([])
     const plain = { ...namespace, schema: JSON.parse(JSON.stringify(Schema.object({}).toJSON())) as unknown }
-    expect(protocolChoices(plain)).toEqual([])
+    expect(protocolChoices(plain, settingsSchema)).toEqual([])
     await Promise.resolve()
   })
 })
@@ -603,6 +607,27 @@ describe('endpoint interrogation', () => {
     // A disclosed output cap rides along with the candidate that has one.
     expect(firstMutate(mutate).ops[0]?.value).toEqual([{ id: 'a' }, { id: 'b', maxTokens: 2048 }])
   })
+
+  it('selects and clears every discovered candidate in one action', async () => {
+    const discover = vi.fn(() => Promise.resolve(ok({
+      models: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+    })))
+    await mountSection({ discover })
+    openEditor('openai')
+
+    fireEvent.click(screen.getByText(en.fetchModels))
+    const dialog = await screen.findByRole('dialog')
+    const boxes = [...dialog.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+    expect(boxes.map(box => box.checked)).toEqual([true, true, true])
+
+    fireEvent.click(within_(dialog, en.fetchDeselectAll))
+    expect(boxes.map(box => box.checked)).toEqual([false, false, false])
+    expect(within_(dialog, en.fetchSelectAll)).toBeTruthy()
+
+    fireEvent.click(within_(dialog, en.fetchSelectAll))
+    expect(boxes.map(box => box.checked)).toEqual([true, true, true])
+    expect(within_(dialog, en.fetchDeselectAll)).toBeTruthy()
+  })
 })
 
 describe('provider rows', () => {
@@ -637,18 +662,91 @@ describe('provider rows', () => {
         active: true,
       }],
     }))) as never
-    const controller = new ModelsSettingsStore(scripted.face as unknown as WireFace)
+    const controller = new ModelsSettingsStore(
+      scripted.face as unknown as WireFace, settingsSchema, new SettingsDescribeMirror(scripted.face as never))
     await controller.load()
     render(<ModelsSection
       controller={controller}
       useSnapshot={bindSnapshotSelector(controller.store)}
       api={scripted.face as never}
+      schema={settingsSchema}
       t={t}
     />)
 
     // Absent is "unknown", never "shipped": an adapter that answers nothing
     // must not have its routes labelled either way.
     expect(screen.queryByText(en.customTag)).toBeNull()
+  })
+})
+
+describe('guided local providers', () => {
+  it('exposes local inference as a first-class entry with framework defaults', async () => {
+    await mountSection()
+
+    fireEvent.click(screen.getByRole('button', { name: en.localAdd }))
+
+    expect(screen.getByRole('radiogroup', { name: en.localFramework })).toBeTruthy()
+    expect(screen.getByRole('radio', { name: /Ollama/ }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByLabelText<HTMLInputElement>(en.baseUrl).value)
+      .toBe('http://127.0.0.1:11434/v1')
+    expect(screen.getByLabelText(en.localKeyInput)).toBeTruthy()
+    expect(screen.queryByLabelText(en.customRoute)).toBeNull()
+    expect(screen.queryByLabelText(en.customApi)).toBeNull()
+
+    fireEvent.click(screen.getByRole('radio', { name: /SGLang/ }))
+    expect(screen.getByLabelText<HTMLInputElement>(en.baseUrl).value)
+      .toBe('http://127.0.0.1:30000/v1')
+    expect(screen.getByText(`${en.localEditorTitle} · SGLang`)).toBeTruthy()
+    expect(buttonNamed(en.fetchModels).disabled).toBe(false)
+  })
+
+  it('creates a selected local route without requiring an API key', async () => {
+    const { mutate, set } = await mountSection()
+
+    fireEvent.click(screen.getByRole('button', { name: en.localAdd }))
+    fireEvent.click(screen.getByRole('radio', { name: /vLLM/ }))
+    fireEvent.click(screen.getByRole('button', { name: en.addModel }))
+    fireEvent.change(screen.getByLabelText(`${en.modelId} 1`), { target: { value: 'local-model' } })
+    fireEvent.click(screen.getByRole('button', { name: en.localCreate }))
+
+    await waitFor(() => { expect(mutate).toHaveBeenCalledOnce() })
+    expect(firstMutate(mutate)).toEqual({
+      ns: 'llm-pi-ai',
+      ops: [{
+        op: 'set',
+        path: ['providers', 'vllm'],
+        value: {
+          displayName: 'vLLM',
+          api: 'openai-completions',
+          baseURL: 'http://127.0.0.1:8000/v1',
+          models: [{ id: 'local-model' }],
+          allowUnauthenticated: true,
+        },
+      }],
+      expectedRevision: 3,
+    })
+    expect(set).not.toHaveBeenCalled()
+  })
+
+  it('marks an existing local route as configured and selects the next preset', async () => {
+    await mountSection({
+      providers: {
+        ollama: {
+          displayName: 'Ollama',
+          api: 'openai-completions',
+          baseURL: 'http://127.0.0.1:11434/v1',
+          models: [{ id: 'qwen3' }],
+        },
+      },
+      declaredRoutes: ['ollama'],
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: en.localAdd }))
+
+    expect(screen.getByRole<HTMLButtonElement>('radio', { name: /Ollama/ }).disabled).toBe(true)
+    expect(screen.getByRole('radio', { name: /vLLM/ }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByLabelText<HTMLInputElement>(en.baseUrl).value)
+      .toBe('http://127.0.0.1:8000/v1')
   })
 })
 

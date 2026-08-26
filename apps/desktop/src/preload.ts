@@ -22,6 +22,16 @@ import type {
   PluginDiagnosticExportResult,
   PluginRecoveryRetryRequest,
   PluginRecoverySnapshot,
+  PresetInstallPreviewRequest,
+  PresetInstallPreviewResult,
+  PresetInstallRequest,
+  PresetInstallResult,
+  PresetRuntimeRequest,
+  PresetRuntimeSnapshot,
+  PresetSquareDetailQuery,
+  PresetSquareDetailResult,
+  PresetSquareListQuery,
+  PresetSquareListResult,
 } from '@deepseek-ai/dsh-plugin-center-contracts'
 import {
   DESKTOP_CHANNELS,
@@ -62,6 +72,21 @@ const bridge: DesktopBridge = Object.freeze({
       ipcRenderer.invoke(DESKTOP_CHANNELS.catalogDetail, query) as Promise<CatalogDetailResult>,
     checkCompatibility: (request: CompatibilityRequest) =>
       ipcRenderer.invoke(DESKTOP_CHANNELS.catalogCheckCompatibility, request) as Promise<CompatibilityDecision>,
+  }),
+  presetSquare: Object.freeze({
+    mutationsEnabled: true,
+    list: (query: PresetSquareListQuery) =>
+      ipcRenderer.invoke(DESKTOP_CHANNELS.presetSquareList, query) as Promise<PresetSquareListResult>,
+    detail: (query: PresetSquareDetailQuery) =>
+      ipcRenderer.invoke(DESKTOP_CHANNELS.presetSquareDetail, query) as Promise<PresetSquareDetailResult>,
+    previewInstall: (request: PresetInstallPreviewRequest) =>
+      ipcRenderer.invoke(DESKTOP_CHANNELS.presetSquarePreviewInstall, request) as Promise<PresetInstallPreviewResult>,
+    install: (request: PresetInstallRequest) =>
+      ipcRenderer.invoke(DESKTOP_CHANNELS.presetSquareInstall, request) as Promise<PresetInstallResult>,
+    checkRuntime: (request: PresetRuntimeRequest) =>
+      ipcRenderer.invoke(DESKTOP_CHANNELS.presetSquareRuntimeCheck, request) as Promise<PresetRuntimeSnapshot>,
+    installRuntime: (request: PresetRuntimeRequest) =>
+      ipcRenderer.invoke(DESKTOP_CHANNELS.presetSquareRuntimeInstall, request) as Promise<PresetRuntimeSnapshot>,
   }),
   installedPlugins: Object.freeze({
     list: () => ipcRenderer.invoke(DESKTOP_CHANNELS.installedPluginsList) as Promise<InstalledPluginListResult>,

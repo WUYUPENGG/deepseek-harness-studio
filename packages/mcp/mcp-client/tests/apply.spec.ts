@@ -55,6 +55,7 @@ vi.mock('@modelcontextprotocol/sdk/client/streamableHttp.js', () => ({
 // vi.mock is hoisted above static imports, so the module under test sees the
 // mocked SDK even through a static import.
 import { apply, name, inject, Config as ConfigSchema } from '@deepseek-ai/dsh-mcp-client/src/index.ts'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 // ---- Helpers ----
 
@@ -132,6 +133,8 @@ describe('mcp-client plugin module exports', () => {
       command: 'echo',
     } as never)
     expect(omitted.reconnect).toEqual({ enabled: true, initialDelayMs: 500, maxDelayMs: 30_000, maxAttempts: 10 })
+    if (omitted.transport !== 'stdio') throw new Error('stdio config expected')
+    expect(omitted.credentialEnv).toEqual({})
 
     const partial = ConfigSchema({
       transport: 'stdio',
@@ -206,6 +209,39 @@ describe('apply (plugin lifecycle)', () => {
 
     await expect(apply(ctx, stdioConfig)).rejects.toThrow(/serverName "srv" is already in use/)
     expect(ctx.tools.get('mcp__srv__remote')).toBeDefined()
+  })
+
+  it('resolves declared credential references into the stdio child env without mutating authored config', async () => {
+    const resolve = vi.fn(async (ref: string) => ({ value: `${ref}-value`, source: 'file' }))
+    ctx.provide('credentials', { resolve } as never)
+    const config: Config = {
+      ...stdioConfig,
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+      credentialEnv: { FEISHU_APP_ID: 'FEISHU_APP_ID', FEISHU_APP_SECRET: 'FEISHU_APP_SECRET' },
+    }
+
+    await apply(ctx, config)
+
+    expect(resolve).toHaveBeenCalledTimes(2)
+    const transportOptions: unknown = vi.mocked(StdioClientTransport).mock.calls.at(-1)?.[0]
+    expect(transportOptions).toMatchObject({
+      env: {
+        ELECTRON_RUN_AS_NODE: '1',
+        FEISHU_APP_ID: 'FEISHU_APP_ID-value',
+        FEISHU_APP_SECRET: 'FEISHU_APP_SECRET-value',
+      },
+    })
+    expect(config.env).toEqual({ ELECTRON_RUN_AS_NODE: '1' })
+  })
+
+  it('fails before connecting when a required managed credential is missing', async () => {
+    ctx.provide('credentials', { resolve: vi.fn(async () => undefined) } as never)
+
+    await expect(apply(ctx, {
+      ...stdioConfig,
+      credentialEnv: { FEISHU_APP_ID: 'FEISHU_APP_ID' },
+    })).rejects.toThrow(/missing required credentials: FEISHU_APP_ID/)
+    expect(mockConnect).not.toHaveBeenCalled()
   })
 
   it('releases the serverName reservation on dispose', async () => {

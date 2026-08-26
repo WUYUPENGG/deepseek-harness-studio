@@ -19,7 +19,10 @@ import { createInterface } from 'node:readline/promises'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 import { validateTarballPayload } from './publication-payload.ts'
-import { DSH_NPM_RELEASE_MANIFEST_PATTERNS } from './release/families.ts'
+import {
+  DSH_NPM_RELEASE_APP_DIRECTORIES,
+  DSH_NPM_RELEASE_MANIFEST_PATTERNS,
+} from './release/families.ts'
 
 const DEFAULT_REGISTRY = 'https://registry.npm.harnessment.com'
 const DEFAULT_OUTPUT_DIRECTORY = '.artifacts/npm-baseline'
@@ -42,7 +45,7 @@ node, bin_path, cwd, timeout_seconds = sys.argv[1:]
 pid, fd = pty.fork()
 if pid == 0:
     os.chdir(cwd)
-    os.execvpe(node, [node, bin_path, "web", "--host", "127.0.0.1", "--port", "0"], os.environ.copy())
+    os.execvpe(node, [node, bin_path, "web", "--no-open", "--host", "127.0.0.1", "--port", "0"], os.environ.copy())
 
 output = bytearray()
 ready_seen = False
@@ -570,8 +573,7 @@ class BaselinePackager {
       this.runner.run('pnpm', [
         '--filter', './vendor/**',
         '--filter', './packages/**',
-        '--filter', './apps/cli',
-        '--filter', './apps/web',
+        ...DSH_NPM_RELEASE_APP_DIRECTORIES.flatMap(directory => ['--filter', `./${directory}`]),
         '--recursive',
         'pack',
         '--pack-destination', artifactDirectory,

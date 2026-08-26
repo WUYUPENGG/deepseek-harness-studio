@@ -81,6 +81,14 @@ describe('SidebarRoot.module.css', () => {
     }
   })
 
+  it('stacks every footer-action occupant above Settings', () => {
+    const actionRules = [...css.matchAll(/\.footerActions\s*\{([^{}]*)\}/g)]
+      .map(([, body = '']) => body.replace(/\s+/g, ' '))
+    expect(actionRules).toContainEqual(expect.stringMatching(
+      /display:\s*flex;.*flex-direction:\s*column;.*gap:\s*2px;/,
+    ))
+  })
+
   it('shares and cancels the wide shell trailing padding structurally', () => {
     const root = declarations('.root')
     expect(root?.get('--dsh-sidebar-inline-padding')).toBe('12px')
@@ -126,5 +134,14 @@ describe('SidebarRoot.module.css', () => {
     expect(declarations('.collapsed .logoRow')?.get('justify-content')).toBe('flex-start')
     expect(declarations('.collapsed .newSession')?.get('align-self')).toBe('flex-start')
     expect(declarations('.collapsed .newSession')?.get('width')).toBe('36px')
+  })
+
+  it('keeps the slotted brand row at the full artwork height', () => {
+    expect(declarations('.brandIdentity')?.get('height')).toBe('24px')
+    expect(declarations('.brandName')?.get('height')).toBe('24px')
+    expect(declarations('.brandName')?.get('line-height')).toBe('24px')
+    expect(declarations('.brandName')?.get('font-size')).toBe('18px')
+    expect(declarations('.fallbackBrandName')?.get('font-size')).toBe('17px')
+    expect(declarations('.fallbackBrandName')?.get('white-space')).toBe('nowrap')
   })
 })

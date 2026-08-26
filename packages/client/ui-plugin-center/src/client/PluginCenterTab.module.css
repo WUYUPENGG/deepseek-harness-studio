@@ -27,6 +27,10 @@
   -webkit-app-region: drag;
 }
 
+:global(html[data-dsh-desktop-platform='win32']) .topbar {
+  padding-right: calc(12px + var(--dsh-windows-caption-controls-width));
+}
+
 :global(html[data-dsh-desktop='true']) .topbar button {
   -webkit-app-region: no-drag;
 }
@@ -993,6 +997,31 @@
 
 .error {
   color: var(--dsw-alias-state-error-primary);
+}
+
+.detailFailure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-error-primary) 28%, transparent);
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 7%, transparent);
+}
+
+.detailFailure > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.detailFailure strong {
+  color: var(--dsw-alias-state-error-primary);
+  font-weight: 500;
 }
 
 .detailHeader {

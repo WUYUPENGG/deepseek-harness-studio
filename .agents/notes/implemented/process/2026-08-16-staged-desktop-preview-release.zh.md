@@ -12,7 +12,7 @@ Status: implemented
 
 预览版使用不可变的 `desktop-preview-v<version>` 标签和全新的预发布 Release。macOS arm64 ZIP 从该标签对应的代码在本地构建并优先上传。仅支持手动触发的 Windows 预览工作流检出同一个标签，验证 Release 名称、附件名称和已验收 `app.asar` 的 SHA-256，然后下载该 macOS ZIP。
 
-Windows runner 会提取已验收的跨平台应用载荷，暂存其中的 Host 与桌面资源，构建未签名的 Windows x64 Electron 外壳和 NSIS 安装程序，并恢复字节完全一致的 `app.asar`。随后，它会静默安装产物、确认打包 Host 已启动，再执行静默卸载。只有这些检查全部通过后，工作流才会把安装程序、可选 blockmap、校验和与验证回执保留在 Actions artifact 中，而已有预发布 Release 只附加安装程序。工作流不会覆盖任何现有 Release 附件。签名 `desktop-v<version>` 工作流继续作为正式发布路径。
+Windows runner 会提取已验收的跨平台应用载荷，暂存其中的 Host 与桌面资源，构建未签名的 Windows x64 Electron 外壳和 NSIS 安装程序，并恢复字节完全一致的 `app.asar`。随后，它会静默安装产物、确认打包 Host 已启动，再执行静默卸载。进入残留安装旅程前，工作流会同时等待安装目录消失和 NSIS 复制到临时位置的后台卸载器退出；每次大型预览安装都有五分钟的有界时限，避免速度较慢的托管 runner 把正常解压误判为卡死。只有这些检查与残留目录修复全部通过后，工作流才会把安装程序、可选 blockmap、校验和与验证回执保留在 Actions artifact 中，而已有预发布 Release 只附加安装程序。工作流不会覆盖任何现有 Release 附件。签名 `desktop-v<version>` 工作流继续作为正式发布路径。
 
 ## Alternatives considered
 

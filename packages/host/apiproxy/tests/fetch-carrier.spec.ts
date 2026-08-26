@@ -143,7 +143,7 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
           rpcId: request.rpcId,
           result: {
             ok: true,
-            value: { version: 'v', cwd: '/w', attachedSessions: 0, canOpenPath: true },
+            value: { version: 'v', cwd: '/w', attachedSessions: 0, home: '/h', canOpenPath: true },
           },
         }
       },
@@ -288,9 +288,23 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
           enabled: false, configured: false, provider: 'bailian', model: 'qwen3.8-max',
           apiKeyUrl: 'https://help.aliyun.com/zh/model-studio/get-api-key',
           providers: [
-            { id: 'bailian', name: '阿里云百炼', configured: false, defaultModel: 'qwen3.8-max', apiKeyUrl: 'https://help.aliyun.com/zh/model-studio/get-api-key', modelEditable: false },
-            { id: 'openrouter', name: 'OpenRouter', configured: false, defaultModel: 'openai/gpt-4.1-mini', apiKeyUrl: 'https://openrouter.ai/settings/keys', modelEditable: true },
+            { id: 'bailian', name: '阿里云百炼', configured: false, defaultModel: 'qwen3.8-max', apiKeyUrl: 'https://help.aliyun.com/zh/model-studio/get-api-key', modelEditable: false, baseUrlEditable: false, apiKeyRequired: true },
+            { id: 'openrouter', name: 'OpenRouter', configured: false, defaultModel: 'openai/gpt-4.1-mini', apiKeyUrl: 'https://openrouter.ai/settings/keys', modelEditable: true, baseUrlEditable: false, apiKeyRequired: true },
           ],
+        } } }
+      },
+      async route(request) {
+        return { rpcId: request.rpcId, result: { ok: true, value: {
+          mode: 'off' as const,
+          modelProvider: request.payload.modelProvider,
+          model: request.payload.model,
+        } } }
+      },
+      async activate(request) {
+        return { rpcId: request.rpcId, result: { ok: true, value: {
+          mode: 'native' as const,
+          modelProvider: request.payload.modelProvider,
+          model: request.payload.model,
         } } }
       },
       async test(request) {
@@ -599,6 +613,29 @@ describe('unary round trip (handler ⇄ client, no network)', () => {
     controller.abort()
     const parsed = await (await pending).json() as { result: { error?: { code: string } } }
     expect(parsed.result.error?.code).toBe('cancelled')
+  })
+})
+
+describe('Preset archive carrier', () => {
+  it('keeps binary Preset import outside the JSON RPC map and forwards only bounded closed options', async () => {
+    const api = fakeApi()
+    const importer = vi.fn(async (
+      data: Uint8Array,
+      options: { readonly targetId?: string; readonly install: boolean },
+    ) => Response.json({ ok: true, bytes: data.length, ...options }))
+    api.agentPresets.importArchive = importer
+    const response = await toFetchHandler(api).fetch(new Request(
+      'http://127.0.0.1/api/agent-preset.import?targetId=my-preset&install=1',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/vnd.dsh.preset+zip', 'content-length': '4' },
+        body: new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
+      },
+    ))
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ ok: true, bytes: 4, targetId: 'my-preset', install: true })
+    expect(importer).toHaveBeenCalledTimes(1)
   })
 })
 

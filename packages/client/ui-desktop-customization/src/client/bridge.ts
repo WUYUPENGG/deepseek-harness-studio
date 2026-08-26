@@ -7,7 +7,10 @@ export type DesktopUpdatePhase =
 /** Immutable update state supplied by the Electron main process. */
 export interface DesktopUpdateState {
   readonly phase: DesktopUpdatePhase
+  /** Running Studio shell version. */
   readonly currentVersion: string
+  /** Harness core version embedded in the packaged Host runtime. */
+  readonly harnessVersion: string
   readonly availableVersion?: string
   readonly progress?: number
   readonly message?: string
@@ -17,7 +20,13 @@ export interface DesktopUpdateState {
 export type AppearancePalette = readonly [string, string, string, string]
 
 /** Stable identifiers for themes bundled with the Desktop frontend. */
-export type BuiltinAppearanceTheme = 'official' | 'whale-maid' | 'cloud-cat'
+export type BuiltinAppearanceTheme =
+  | 'official'
+  | 'whale-maid'
+  | 'cloud-cat'
+  | 'jiutian-deep-space'
+  | 'jiutian-quantum-glass'
+  | 'jiutian-dawn-horizon'
 
 /** Renderer-safe persisted appearance values. */
 export interface AppearanceSettings {

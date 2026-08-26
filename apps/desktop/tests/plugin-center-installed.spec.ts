@@ -37,7 +37,7 @@ function writeBundle(
     version,
     dsh: {
       bundle: { patch: './cordis.patch.yml' },
-      pluginCenter,
+      pluginCenter: { expectedEntries: [entryId], ...pluginCenter },
     },
   }, undefined, 2)}\n`)
   writeFileSync(join(directory, 'cordis.patch.yml'), `- id: ${entryId}\n  disabled: false\n`)

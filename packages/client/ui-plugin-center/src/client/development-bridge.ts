@@ -23,6 +23,8 @@ import type {
   PluginDiagnosticExportResult,
   PluginRecoveryRetryRequest,
   PluginRecoverySnapshot,
+  PresetRuntimeSnapshot,
+  PresetSquareItem,
 } from '@deepseek-ai/dsh-plugin-center-contracts'
 import { COMPATIBILITY_ACTIONS } from '@deepseek-ai/dsh-plugin-center-contracts'
 import type { DesktopCatalogBridge } from './bridge.ts'
@@ -35,6 +37,92 @@ const ETAG = 'web-development-f003-v1'
 const OPERATION_STORAGE_KEY = 'dsh.plugin-center.development-operation.v1'
 const INSTALLED_STORAGE_KEY = 'dsh.plugin-center.development-installed.v1'
 const OPERATION_INTERVAL_MS = 180
+
+const FUFAN_PRESET_FIXTURES = [{
+  slug: 'fufan-llm-wiki-producer', presetId: 'llm-wiki-fullstack', title: 'LLM Wiki Producer',
+  description: '1 套 Agent Preset + 1 个 Skill，面向企业知识库项目按阶段完成开发、验证与交付。',
+}, {
+  slug: 'fufan-ai-webapp', presetId: 'ai-product-developer', title: 'AI WebApp',
+  description: '1 套 Agent Preset + 3 个 Skills，覆盖需求澄清、规格整理与 TDD 的 Web 产品开发流程。',
+}, {
+  slug: 'fufan-ppt-office', presetId: 'dsh-motion-deck-studio', title: 'PPT Office',
+  description: '1 套 Agent Preset + 1 个 Skill，把大纲生成并验收为 8 页可交互动效演示。',
+}, {
+  slug: 'fufan-video-generation', presetId: 'product-video-director', title: '视频生成',
+  description: '1 套 Agent Preset + 1 个 Skill，从调研、分镜到 HyperFrames MP4；运行需 FFmpeg。',
+}, {
+  slug: 'fufan-content-factory', presetId: 'ai-content-image-studio', title: '内容工厂',
+  description: '1 套 Agent Preset + 1 个 Skill + 1 个图像生成 Plugin；生图需本机已登录 Codex CLI。',
+}, {
+  slug: 'fufan-ai-report', presetId: 'ai-report-analyst', title: 'AI 报表',
+  description: '1 套 Agent Preset + 1 个 Skill，把本地 Excel 生成可验收的离线交互报告。',
+}, {
+  slug: 'fufan-feishu-digital-employee', presetId: 'feishu-digital-employee', title: '飞书数字员工',
+  description: '1 套 Agent Preset + 1 个 Skill，并接入飞书 MCP 与时间解析 MCP；使用前需配置飞书应用凭证。',
+}] as const
+
+const PRESET_FIXTURES: readonly PresetSquareItem[] = [
+  ...FUFAN_PRESET_FIXTURES.map((entry, index): PresetSquareItem => ({
+    id: entry.presetId === 'llm-wiki-fullstack'
+      ? 'fufan-case-07-llm-wiki-producer'
+      : `fufan-case-0${String(index)}`,
+    ...entry,
+    source: 'fufan-official',
+    publisher: { username: '赋范官方' },
+    artifact: {
+      downloadUrl: `https://www.dshdesktop.com/preset/api/v1/presets/${entry.slug}/download`,
+      sha256: String(index + 1).repeat(64),
+      sizeBytes: 48_000 + index * 1_000,
+      formatVersion: 1,
+      sourceDshVersion: '0.1.0-rc.8',
+    },
+    detailUrl: `https://www.dshdesktop.com/preset/p/${entry.slug}`,
+    downloadCount: 0,
+    visualVariant: entry.presetId === 'llm-wiki-fullstack' ? 6 : index - 1,
+    createdAt: entry.presetId === 'llm-wiki-fullstack'
+      ? '2026-08-17T06:07:00.000Z'
+      : `2026-08-17T06:0${String(index)}:00.000Z`,
+  })),
+  {
+    id: '17d84963-a192-4d25-b918-0d454bc3da4e',
+    slug: 'web-research-assistant',
+    presetId: 'web-research-assistant',
+    title: '网页研究助手',
+    description: '组合浏览器、检索与信息整理能力的社区 Agent Preset。',
+    source: 'community',
+    publisher: { username: 'dsh-community' },
+    artifact: {
+      downloadUrl: 'https://www.dshdesktop.com/preset/api/v1/presets/web-research-assistant/download',
+      sha256: 'a'.repeat(64),
+      sizeBytes: 48_320,
+      formatVersion: 1,
+      sourceDshVersion: '0.1.0-rc.5',
+    },
+    detailUrl: 'https://www.dshdesktop.com/preset/p/web-research-assistant',
+    downloadCount: 2_418,
+    visualVariant: 2,
+    createdAt: '2026-08-12T08:00:00.000Z',
+  }, {
+    id: 'aca9f741-748b-4bd2-a5bf-cc303ae0081a',
+    slug: 'product-design-copilot',
+    presetId: 'product-design-copilot',
+    title: '产品设计搭档',
+    description: '面向需求分析、交互设计与原型评审的协作 Preset。',
+    source: 'community',
+    publisher: { username: 'preset-lab' },
+    artifact: {
+      downloadUrl: 'https://www.dshdesktop.com/preset/api/v1/presets/product-design-copilot/download',
+      sha256: 'b'.repeat(64),
+      sizeBytes: 62_144,
+      formatVersion: 1,
+      sourceDshVersion: '0.1.0-rc.5',
+    },
+    detailUrl: 'https://www.dshdesktop.com/preset/p/product-design-copilot',
+    downloadCount: 1_106,
+    visualVariant: 4,
+    createdAt: '2026-08-15T03:30:00.000Z',
+  },
+]
 
 const WORKSPACE_TOOLS = {
   pluginId: 'fixture.workspace-tools',
@@ -812,6 +900,38 @@ export function developmentCatalogBridge(): DesktopCatalogBridge | undefined {
       retry: request => recovery.retry(request),
       exportDiagnostics: request => recovery.exportDiagnostics(request),
       onState: listener => recovery.onState(listener),
+    },
+    presetSquare: {
+      mutationsEnabled: false,
+      list: ({ query, sort }) => {
+        const needle = query.trim().toLocaleLowerCase()
+        const items = PRESET_FIXTURES
+          .filter(item => needle === '' || [item.title, item.description, item.presetId, item.publisher.username]
+            .some(value => value.toLocaleLowerCase().includes(needle)))
+          .slice()
+          .sort((left, right) => sort === 'downloads'
+            ? right.downloadCount - left.downloadCount
+            : right.createdAt.localeCompare(left.createdAt))
+        return Promise.resolve({ items, total: PRESET_FIXTURES.length, sort, fetchedAt: new Date().toISOString() })
+      },
+      detail: ({ slug }) => Promise.resolve({
+        item: PRESET_FIXTURES.find(item => item.slug === slug) ?? null,
+        fetchedAt: new Date().toISOString(),
+      }),
+      previewInstall: () => rejectUnavailable(),
+      install: () => rejectUnavailable(),
+      checkRuntime: ({ presetId }) => Promise.resolve({
+        presetId,
+        phase: 'missing',
+        dependencies: (presetId === 'product-video-director'
+          ? ['node', 'hyperframes', 'ffmpeg', 'ffprobe'] as const
+          : ['node', 'python', 'openpyxl', 'echarts', 'playwright', 'chromium'] as const)
+          .map(id => ({ id, state: 'missing' as const, installable: false, version: null })),
+        canInstall: false,
+        revision: 1,
+        updatedAt: new Date().toISOString(),
+      } satisfies PresetRuntimeSnapshot),
+      installRuntime: () => rejectUnavailable(),
     },
   }
 }
