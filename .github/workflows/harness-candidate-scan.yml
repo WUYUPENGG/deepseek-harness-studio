@@ -1,0 +1,63 @@
+# 每周扫描官方 deepseek-harness 的更新，产出「可摘取单元清单」
+#
+# 目的：本仓库是 deepseek-harness 的二开衍生版，整体 merge 会产生数百个核心
+# 冲突。但官方更新中的「独立新增」（新插件包、新角色预设、新脚本）可以低成本
+# 单独摘取。本工作流定期运行 .ci/extract-candidates.mjs，输出：
+#   - 可直接移植的单元（依赖齐备、与二开区无重叠）
+#   - 需适配的单元（与二开区有文件重叠）
+#   - 依赖缺失的单元（必须等整体升级）
+# 报告作为 artifact 上传，概览写入 job summary。
+#
+# 手动触发：Actions → Harness candidate scan → Run workflow
+name: Harness candidate scan
+
+on:
+  schedule:
+    # 每周一 07:00（北京时间）；UTC 为周日 23:00
+    - cron: '0 23 * * 0'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan official harness updates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout fork with full history
+        uses: actions/checkout@v4
+        with:
+          # 需要完整历史才能算出与官方的共同祖先
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Fetch official harness
+        run: |
+          set -euo pipefail
+          git remote add harness https://github.com/deepseek-ai/deepseek-harness.git
+          # 官方仓库提交量大，先按较深深度取；若共同祖先仍在更早处，脚本会报错提示加深
+          git fetch harness master --depth=6000
+
+      - name: Scan extractable units
+        run: node .ci/extract-candidates.mjs --out harness-candidates
+
+      - name: Write job summary
+        run: |
+          set -euo pipefail
+          {
+            echo '## 官方 harness 可摘取单元概览'
+            echo
+            sed -n '1,25p' harness-candidates/harness-candidates.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-candidates
+          path: harness-candidates/
+          retention-days: 30
