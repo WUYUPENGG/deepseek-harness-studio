@@ -166,7 +166,12 @@ describe('desktop packaging configuration', () => {
     )
     expect(windowsInstallerInclude).toContain('StrCpy $3 "$EXEDIR"')
     expect(windowsInstallerInclude).toContain('StrCpy $3 "$INSTDIR"')
-    expect(windowsInstallerInclude).toContain('ExecWait')
+    expect(windowsInstallerInclude).toContain(
+      'Exec \'"$3\\${APP_EXECUTABLE_FILENAME}" --dsh-installer-quit\'',
+    )
+    expect(windowsInstallerInclude).not.toContain(
+      'ExecWait \'"$3\\${APP_EXECUTABLE_FILENAME}" --dsh-installer-quit\'',
+    )
     expect(windowsInstallerInclude).toContain('taskkill.exe')
     expect(windowsInstallerInclude).toContain('/T /F /IM "${APP_EXECUTABLE_FILENAME}"')
     expect(windowsInstallerInclude).toContain('Get-CimInstance -ClassName Win32_Process')
@@ -178,17 +183,17 @@ describe('desktop packaging configuration', () => {
     expect(forcedCleanup).toBeGreaterThan(fileCheckEnd)
     expect(windowsInstallerInclude).toContain('Pop $0')
     expect(windowsInstallerInclude).toContain('Sleep 3000')
-    expect(windowsInstallerInclude).toContain('$1 == "0.1.0-rc.5"')
-    expect(windowsInstallerInclude).toContain('$1 == "0.1.0-rc.6"')
-    expect(windowsInstallerInclude).toContain('$1 == "0.1.0-rc.7"')
-    expect(windowsInstallerInclude).toContain('$1 == "0.1.0-rc.8"')
-    expect(windowsInstallerInclude).toContain('$1 == "0.1.0-rc.9"')
+    expect(windowsInstallerInclude).toContain('StrCpy $7 "$1" 9')
+    expect(windowsInstallerInclude).toContain('${If} $7 == "0.1.0-rc."')
     expect(windowsInstallerInclude).toContain(
       'ReadRegStr $2 SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}" "InstallLocation"',
     )
+    expect(windowsInstallerInclude).toContain('${If} $2 == "$INSTDIR"')
+    expect(windowsInstallerInclude).toContain('StrCpy $8 "1"')
     expect(windowsInstallerInclude).toContain('StrLen $5 "\\${APP_FILENAME}"')
     expect(windowsInstallerInclude).toContain('StrCpy $6 "$2" $5 -$5')
     expect(windowsInstallerInclude).toContain('${If} $6 == "\\${APP_FILENAME}"')
+    expect(windowsInstallerInclude).toContain('${If} $8 == "1"')
     expect(windowsInstallerInclude).toContain(
       '${IfNot} ${FileExists} "$2\\${APP_EXECUTABLE_FILENAME}"',
     )
